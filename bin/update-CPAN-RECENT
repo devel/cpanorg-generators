@@ -1,0 +1,66 @@
+#!/bin/sh
+
+PATH=$HOME/cpan/bin:$PATH; export PATH
+
+cd $HOME/cpan/CPAN || exit 1
+
+makeRECENT () {
+  idx=$2
+  tmp=~/tmp/$idx.$$
+  idxidx=indices/$idx
+  find . -mtime -7 '(' -type f -o -type l ')' $1 | egrep -v '.mirror.log|.FTP_LS_DATA' | sed 's%^\./%%'> $tmp && mv -f $tmp $idxidx || rm -f $tmp
+  sort -o $idxidx $idxidx
+}
+
+makeRECENT -print	RECENT-print
+makeRECENT -ls		RECENT-ls
+
+rm -f RECENT
+ln -s indices/RECENT-print RECENT
+
+perl -ne '
+BEGIN{
+print <<__EOH__;
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<HTML>
+<HEAD>
+<TITLE>CPAN/RECENT</TITLE>
+<LINK REV="made" HREF="mailto:cpan\@perl.org">
+</HEAD>
+<BODY>
+
+<H1>CPAN/RECENT</H1>
+
+<p>Welcome to the CPAN, the Comprehensive Perl Archive Network.</p>
+
+<p>This document lists the recent arrivals at CPAN.
+"Recent" means being newer than one week.</p>
+
+<p>See also the list of <a href="http://search.cpan.org/">recent
+modules</a> on <a
+href="http://search.cpan.org/">search.cpan.org</a>.</p>
+
+
+<HR>
+
+<UL>
+__EOH__
+}
+
+chomp; print "<LI><A HREF=\"$_\">$_</A>\n";
+
+END{
+print <<__EOT__;
+</UL>
+
+<HR>
+
+</BODY>
+</HTML>
+__EOT__
+}
+' < RECENT > RECENT.html
+
+exit 0
+
+# eof

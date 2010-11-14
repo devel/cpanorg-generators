@@ -1,0 +1,109 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+require 5;
+
+use File::Find qw(find);
+
+my @ignoredir =
+    (
+     'indices' ,
+    );
+
+my @ignorefile =
+    (
+     '.FTP_LS_DATA' ,
+     'MIRRORING.FROM'
+    );
+
+my @_rwx = qw(--- --x -w- -wx r-- r-x rw- rwx);
+
+sub rwx {
+    my $mode = shift;
+
+    unless (defined $rwx[$mode]) {
+	$rwx[$mode] = ( -f _ ? '-' :
+			( -d _ ? 'd' :
+			  ( -l _ ? 'l' : '?' ) ) );
+	$rwx[$mode] .= $_rwx[($mode & 0700) >> 6] .
+	               $_rwx[($mode & 0070) >> 3] .
+		       $_rwx[($mode & 0007)     ] if -f _ or -d _;
+    }
+
+    $rwx[$mode];
+}
+
+sub uid2nam {
+    my $uid = shift;
+    
+    $uid2nam[$uid] = ( getpwuid($uid) )[0]
+	unless defined $uid2nam[$uid];
+
+    $uid2nam[$uid];
+}
+
+sub gid2nam {
+    my $gid = shift;
+    
+    $gid2nam[$gid] = ( getgrgid($gid) )[0]
+	unless defined $gid2nam[$gid];
+
+    $gid2nam[$gid];
+}
+
+sub yyyymmddhhmmss {
+    my $time = shift;
+
+    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = gmtime($time);
+
+    sprintf("%04d%02d%02d.%02d%02d%02d",
+	    $year + 1900, $mon + 1, $mday, $hour, $min, $sec);
+}
+
+sub fnquote {
+    my ($fn) = shift;
+
+    $fn =~ s:^$basedir/?::;
+    return '.' if $fn eq '';
+
+    $fn =~ s/([\x00-\x20\x7f-\xa0\\])/sprintf("\\x%02x", ord($1))/eg;
+
+    $fn;
+}
+
+sub wanted {
+   my $ignore;
+   foreach $ignore (@ignorefile) {
+       return if $_ eq $ignore;
+   }
+   foreach $ignore (@ignoredir) {
+       return if $File::Find::dir eq $ignore;
+   }
+   my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
+       $atime,$mtime,$ctime,$blksize,$blocks) = lstat($_);
+   my @ls = ($ino,
+	     int($blocks / 2 + 0.5),
+	     rwx($mode),
+	     $nlink,
+	     uid2nam($uid),
+	     gid2nam($gid),
+	     $size,
+	     yyyymmddhhmmss($mtime),
+	     fnquote($File::Find::name));
+   push(@ls, fnquote(readlink($_))) if -l _;
+   print "@ls\n";
+}
+
+if (@ARGV == 2) {
+    ($basedir, $rootdir) = @ARGV;
+} else {
+    ($basedir, $rootdir) = ('', @ARGV);
+    $rootdir = '.' unless defined $rootdir;
+}
+
+find( { wanted => \&wanted, follow => 0 }, $rootdir);
+
+exit(0);
+
+# eof

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+HOME=~ask
+export HOME
+PATH=$HOME/cpan/bin:$PATH
+export PATH
+TMPDIR=$HOME/tmp
+export TMPDIR
+
+CPAN=$HOME/cpan/CPAN
+export CPAN
+
+cd $CPAN || exit 1
+
+makeindex () {
+  idx=$2 
+  gz=$idx.gz 
+  tmpgz=$TMPDIR/$gz.$$
+  idxgz=$CPAN/indices/$gz
+  eval "$1" | gzip > $tmpgz
+  if test -s $tmpgz
+  then
+    mv -f $tmpgz $idxgz
+  else
+    echo "$0: $tmpgz empty"
+    rm -f $tmpgz
+  fi
+}
+
+
+rm -f *~ MF* core
+
+makeindex "/bin/ls -laR"		"ls-lR"
+makeindex "pfgmls $CPAN/ $CPAN/"	"find-ls"
+
+logdir=$HOME/cpan/log
+zcat indices/find-ls.gz | grep -v ' indices/' | sort -k 8 > $logdir/.find-ls
+mv -f $logdir/.find-ls $logdir/find-ls
+date | (cd $logdir && ci -q -l find-ls 2>&1 >/dev/null)
+
+makeindex "du -k|sort -k 1" "du-k"
+
+rm -f $mf
+
+exit 0
+
+# eof

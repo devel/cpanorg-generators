@@ -1,0 +1,24 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+$ENV{'TZ'} = 'UTC';
+chomp(my $date = `date`);
+my $time = time();
+print <<__EOB__;
+#
+# MIRRORING.FROM
+#
+# The sites the CPAN is building itself from.
+#
+# Last update (TZ = UTC): $date
+#                         UNIX epoch seconds = $time
+#
+
+# This file has been deprecated.  Email cpan\@perl.org if you have
+# questions.  (- Ask Bjørn Hansen, November 14 2010) 
+
+#
+# End of MIRRORING.FROM
+#
+__EOB__
