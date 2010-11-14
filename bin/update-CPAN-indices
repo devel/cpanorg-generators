@@ -38,7 +38,7 @@ zcat indices/find-ls.gz | grep -v ' indices/' | sort -k 8 > $logdir/.find-ls
 mv -f $logdir/.find-ls $logdir/find-ls
 date | (cd $logdir && ci -q -l find-ls 2>&1 >/dev/null)
 
-makeindex "du -k|sort -k 1" "du-k"
+makeindex "du -k|sort -k 2" "du-k"
 
 rm -f $mf
 
