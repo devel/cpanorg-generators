@@ -45,7 +45,7 @@ sub uid2nam {
     $uid2nam[$uid] = ( getpwuid($uid) )[0]
 	unless defined $uid2nam[$uid];
 
-    $uid2nam[$uid];
+    $uid2nam[$uid] || $uid;
 }
 
 our @gid2nam;
@@ -55,7 +55,7 @@ sub gid2nam {
     $gid2nam[$gid] = ( getgrgid($gid) )[0]
 	unless defined $gid2nam[$gid];
 
-    $gid2nam[$gid];
+    $gid2nam[$gid] || $gid;
 }
 
 sub yyyymmddhhmmss {
