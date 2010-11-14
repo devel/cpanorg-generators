@@ -6,6 +6,9 @@ require 5;
 
 use File::Find qw(find);
 
+my ($basedir, $rootdir);
+
+
 my @ignoredir =
     (
      'indices' ,
@@ -18,6 +21,7 @@ my @ignorefile =
     );
 
 my @_rwx = qw(--- --x -w- -wx r-- r-x rw- rwx);
+our @rwx;
 
 sub rwx {
     my $mode = shift;
@@ -34,6 +38,7 @@ sub rwx {
     $rwx[$mode];
 }
 
+our @uid2nam;
 sub uid2nam {
     my $uid = shift;
     
@@ -43,6 +48,7 @@ sub uid2nam {
     $uid2nam[$uid];
 }
 
+our @gid2nam;
 sub gid2nam {
     my $gid = shift;
     
