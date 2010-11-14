@@ -1,0 +1,78 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+use Getopt::Long;
+
+my %OK;
+my %AGE;
+my %FAIL;
+my %RESP;
+
+my $Fail = 10;
+my $Age  = 7;
+my $Pipein = 0;
+
+die "$0: Usage: $0 [--age=age] [--fail=fail] [--pipein]"
+  unless GetOptions('age=f'  => \$Age,
+		    'fail=f' => \$Fail,
+		    'pipein' => \$Pipein);
+
+sub munch {
+  my ($host, $url, $time, $age, $resp);
+  if (/^OK /) {
+    (undef, $host, $url, $time, $age, $resp) = split(' ', $_, 6);
+    return unless defined $time && defined $age && defined $resp;
+    $host .= ":$url";
+    $OK{$host}++;
+    $AGE{$host} += $age;
+  } elsif (/^FAIL /) {
+    (undef, $host, $url, $time, $age, $resp) = split(' ', $_, 6);
+    return unless defined $time && defined $age && defined $resp;
+    $host .= ":$url";
+    $FAIL{$host}++;
+    $resp =~ s/\s+$//;
+    $RESP{$host}{$resp}++;
+  } else {
+    die "$0: ???: $.: $_";
+  }
+}
+
+while (<>) {
+  chomp;
+  if ($Pipein) {
+    if (open(FH, $_)) {
+      while (<FH>) {
+	chomp;
+	&munch;
+      }
+      close(FH);
+    }
+  } else {
+    &munch;
+  }
+}
+
+my %HOST;
+@HOST{ keys %OK   } = ();
+@HOST{ keys %FAIL } = ();
+
+for my $host (sort { lc $a cmp lc $b } keys %HOST) {
+  my $ok   = $OK{$host}   || 0;
+  my $fail = $FAIL{$host} || 0;
+  my $rat  = 100 / ($ok + $fail);
+  my $age  = $ok ? sprintf("%.2f", $AGE{$host} / ($ok * 86400)) : "-";
+  my $exp  = '';
+  if ($fail) {
+    my @exp;
+    for my $r (sort { lc $a cmp $b } keys %{ $RESP{$host} }) {
+      push @exp, qq["$r" $RESP{$host}{$r}];
+    }
+    $exp = " " . join(' ', @exp);
+  }
+  if (($age ne "-" && $age > $Age) || ($fail > $Fail)) {
+    printf "$host $ok %.1f $age $fail %.1f$exp\n", $ok * $rat, $fail * $rat;
+  }
+}
+
+exit(0);

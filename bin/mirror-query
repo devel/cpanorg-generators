@@ -1,0 +1,109 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+
+# Yeah, yeah, flat file databases are bad.
+# I live in the eighties, I am afraid.  So sue me.
+
+use strict;
+use Getopt::Long;
+
+my $Site;
+my $Sit;
+my $Frequency;
+my $Ftp;
+my $Http;
+my $Rsync;
+my $Loc;
+my $Org;
+my $TimeZone;
+my $Contact;
+
+die "$0: Usage: $0 [--site[=pat]] [--freq[=freq]] [--ftp] [--http] [--rsync] [--loc[=pat]] [--org[=pat]] [--timezone[=tz]] [--contact[=pat]]"
+  unless GetOptions(
+		    '--site:s'     => \$Site,
+		    '--freq:s'     => \$Frequency,
+		    '--ftp'        => \$Ftp,
+		    '--http'       => \$Http,
+		    '--rsync'      => \$Rsync,
+		    '--loc:s'      => \$Loc,
+		    '--org:s'      => \$Org,
+		    '--timezone:s' => \$TimeZone,
+		    '--contact:s'  => \$Contact,
+		   );
+
+my $DB = 'CPAN/MIRRORED.BY';
+my %DB;
+
+sub read_db {
+  if (open(DB, $DB)) {
+    my ($site, $var, $val);
+    while (<DB>) {
+      next if /^\s*(\#.*)?$/;
+      chomp;
+      if (/^(\S+):/) {
+	$site = $1;
+      } elsif (/^\s+(?:dst_(\w+)|(frequency))\s*=\s*"(.*)"/) {
+	goto BAD unless defined $site;
+	$DB{$site}{$1 || $2} = $3;
+      } else {
+      BAD: {
+	  die "$0: db '$DB': $.: '$_'";
+	}
+      }
+    }
+    close(DB);
+  } else {
+    die "$0: db '$DB': $!\n";
+  }
+}
+
+read_db();
+
+sub tabout {
+  my $data = shift;
+  $data = "-" unless defined $data && length $data;
+  if ($data =~ / /) {
+    $data =~ s/'/\\'/g;
+    $data = qq['$data'];
+  }
+  print "\t$data";
+}
+
+sub nextifnq {
+    no warnings 'exiting';
+    next if defined $_[2] && $DB{$_[0]}{$_[1]} ne $_[2];
+}
+
+sub nextifnp {
+    no warnings 'exiting';
+    next if defined $_[2] && $DB{$_[0]}{$_[1]} !~ $_[2];
+}
+
+sub nextifnx {
+    no warnings 'exiting';
+    next if defined $_[2] && ! exists $DB{$_[0]}{$_[1]};
+}
+
+for my $site (sort keys %DB) {
+  next if defined $Site && length $Site && $site !~ /$Site/oi;
+  nextifnq $site, frequency    => $Frequency;
+  nextifnx $site, ftp          => $Ftp;
+  nextifnx $site, http         => $Http;
+  nextifnx $site, rsync        => $Rsync;
+  nextifnp $site, location     => $Loc;
+  nextifnp $site, organization => $Org;
+  nextifnq $site, timezone     => $TimeZone;
+  nextifnp $site, contact      => $Contact;
+  print $site;
+  tabout($DB{$site}{frequency}) if defined $Frequency;
+  tabout($DB{$site}{ftp})       if defined $Ftp;
+  tabout($DB{$site}{http})      if defined $Http;
+  tabout($DB{$site}{rsync})     if defined $Rsync;
+  tabout($DB{$site}{location})  if defined $Loc;
+  tabout($DB{$site}{contact})   if defined $Contact;
+  tabout($DB{$site}{timezone})  if defined $TimeZone;
+  print "\n";
+}
+
+exit(0);

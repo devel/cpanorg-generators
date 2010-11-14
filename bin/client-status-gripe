@@ -1,0 +1,203 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use IPC::Open3;
+
+my $Sendmail;
+
+die "$0: Usage: $0 [--sendmail]"
+  unless GetOptions('--sendmail' => \$Sendmail);
+
+my $STATUS_DIR  = 'log/clients';
+my $STATUS_APP  = 'bin/client-status-summary';
+my $CONTACT_APP = '../../bin/mirror-query';
+
+chdir($STATUS_DIR) or die "$0: chdir '$STATUS_DIR: $!\n";
+
+my $RUN_DAYS  = 7; # Cron frequency
+my $LAST_DAYS = 7;
+my $AGE_LIMIT  = 7;
+my $FAIL_LIMIT = 10;
+
+my @GRIPE;
+
+if (open(FIND, "find . -type f -mtime -$LAST_DAYS -print |")) {
+  my $pid = open3(\*WFH, \*RFH, '', "$STATUS_APP --pipein");
+  if (defined $pid) {
+    while (<FIND>) {
+      print WFH;
+    }
+    close(WFH);
+    while (<RFH>) {
+      chomp;
+      push @GRIPE, $_;
+    }
+    close(RFH);
+  } else {
+    die "$0: status_app '$STATUS_APP': $!\n";
+  }
+  close(FIND);
+} else {
+  die "$0: find: $!";
+}
+
+sub gripe_decode {
+  my $gripe = shift;
+  my ($siteurl, $good, $goodp, $age, $fail, $failp, $resp) =
+    split(' ', $gripe, 7);
+  my @expl;
+  push @expl,
+    "'$good $goodp' means that during the scan period there were";
+  push @expl,
+    "$good successful scans, which was $goodp% of all the scans.";
+  push @expl,
+    "(Which means that your connectivity was 100%, which is very good!)"
+      if $goodp == 100.0;
+  push @expl,
+    "(Which means that your connectivity was 0%, which is very bad!)"
+      if $goodp == 0.0;
+  push @expl,
+    "'$age' means that during the scan period the average age of";
+  push @expl,
+    "the timestamp inside the timestamp file was $age days.";
+  push @expl,
+    "(The age of '-' means that the timestamp file could not be checked.)"
+      if $age eq "-";
+  push @expl,
+    "(Which is why you were alerted.)"
+      if $age ne "-" && $age > $AGE_LIMIT || $age eq "-";
+  push @expl,
+    "'$fail $failp' means that during the scan period there were";
+  push @expl,
+    "$fail failed scans, which was $failp% of all the scans.";
+  push @expl,
+    "(Which is why you were alerted.)"
+      if $failp > $FAIL_LIMIT;
+  if (defined $resp && length $resp) {
+    push @expl,
+      "The remainder of the line lists the failures.";
+    push @expl,
+      "'404 Not found' is the usual HTTP failure."
+	if $resp =~ /404 /;
+    push @expl,
+      "'403 Forbidden' means that your mirror is not public."
+	if $resp =~ /403 /;
+    push @expl,
+      "'alarm': the scan was not connected before timeout."
+	if $resp =~ /alarm/;
+    push @expl,
+      "'login': the FTP server refused login.",
+	if $resp =~ /login:/;
+    push @expl,
+      "'connect': the host was connected but the server was not.",
+	if $resp =~ /connect:|Connection refused/;
+    push @expl,
+      "'cwd:': the FTP server was connected but the directory was not found.",
+	if $resp =~ /cwd: /;
+    push @expl,
+      "'cwd:': the FTP server was connected but the file was not found.",
+	if $resp =~ /get: /;
+    push @expl,
+      "'Bad hostname': the FTP server hostname was not found.",
+	if $resp =~ /Bad hostname/;
+    push @expl,
+      "Any timeouts of the scan are several minutes long.";
+  }
+  return @expl;
+}
+
+sub gripe {
+  my ($site, $GRIPE, @contact) = @_;
+  for my $c (@contact) { # Undo the email obfuscation.
+      if ($c =~ /^([\w\.-]+)\W([\w\.\-]+)$/) {
+	  $c = "$2\@$1";
+      }
+  }
+  my @gripe = @{ $GRIPE->{ $site } };
+  unless ($Sendmail) {
+    print "$site: @contact: @gripe\n";
+    return;
+  }
+
+  push @contact, 'ask@perl.org';
+
+  my $dear = sprintf "CPAN mirror admin%s %s", @contact == 1 ? '' : 's', join(" and ", @contact);
+  open(MAIL, "| /bin/mailx -s 'CPAN mirror status alert' @contact") or die "$0: mailx: $!";
+  print MAIL <<__EOF__;
+Dear $dear,
+
+our automatic CPAN mirror status checks indicate that there might
+be some problems with your CPAN mirror, $site.
+(Note that '$site' is just an id, see below for
+the actual URLs that were scanned.)
+
+The CPAN master site, ftp.funet.fi, scans the mirrors four times
+each day, and the scan results of $LAST_DAYS last days are checked.
+
+Currently this alert is triggered if your mirror site has either:
+- more than $FAIL_LIMIT% failed scans
+- the average age of the timestamp file (MIRRORED.BY) is more than $AGE_LIMIT days
+
+Note that this alert script is run automatically each $RUN_DAYS days
+and it spans the last $LAST_DAYS days, so if you had transient problems
+that have been already been resolved, you can ignore these warnings.
+
+Also, the scanning is done from Los Angeles, which may not offer the
+best proof for the network connectivity to your own clients.
+
+Please also verify that your mirror information
+(see http://www.cpan.org/MIRRORED.BY) is valid.
+
+Here are the details:
+__EOF__
+  my $n = @gripe;
+  my $i = 1;
+  for my $gripe (@gripe) {
+    print MAIL "\nALERT $i/$n:\n$gripe\n\n";
+    for my $d (gripe_decode($gripe)) {
+      print MAIL "\t", $d, "\n";
+    }
+    $i++;
+  }
+  print MAIL <<__EOF__;
+
+Yours sincerely,
+cpan\@perl.org
+http://www.cpan.org/
+__EOF__
+  close(MAIL);
+}
+
+if (@GRIPE) {
+  my %GRIPE;
+  for my $gripe (@GRIPE) {
+    my ($site) = ( $gripe =~ /^(.+?):/ );
+    push @{ $GRIPE{$site} }, $gripe;
+  }
+  if (open(CONTACT, "$CONTACT_APP --contact |")) {
+    my %CONTACT;
+    while (<CONTACT>) {
+      chomp;
+      my ($site, $contact) = split(' ', $_, 2);
+      $contact = $1 if $contact =~ /^'(.*)'$/;
+      if (length $contact && $contact ne "-") {
+	$CONTACT{$site} = [ split(' ', $contact) ];
+      } else {
+	# What to do if no contact address is known?
+      }
+    }
+    close(CONTACT);
+    for my $site (sort keys %GRIPE) {
+      if (exists $CONTACT{$site}) {
+	gripe($site, \%GRIPE, @{$CONTACT{$site}});
+      } else {
+	# What to do if no contact address is known?
+      }
+    }
+  } else {
+    die "$0: contact_app '$CONTACT_APP': $!";
+  }
+}
+
+exit(0);

@@ -1,0 +1,463 @@
+#!/usr/bin/env perl
+
+#
+# check-mirror-status
+#
+# Checks for the status (up-to-dateness) of CPAN mirrors.
+# The check is very rudimentary and based on one file: the CPAN master
+# site updates every hour the file MIRRORING.FROM, and most importantly
+# (for this script) it updates one timestamp (UTC) within the file (note:
+# not *of* the file).  Since mirrors are supposed to pick up changed files,
+# this allows us to track how uptodate each mirror is.  (Of course at worst
+# they could be mirroring just the MIRRORING.FROM and not mirror anything
+# else, but really checking for the uptodateness (or correctness) of several
+# hundred megabytes of the hundreds of CPAN sites is not feasible.)
+#
+# The logic of the script:
+# (1) read in the file /pub/CPAN/MIRRORED.BY which lists the mirror sites
+#     and the ftp and http URLs they serve CPAN from
+# (2) Using the Net::FTP and LWP start at most 16 concurrent connections
+#     which will connect the service and retrieve the MIRRORING.FROM,
+#     extract the timestamp, and return it to the master process
+#     (each connection is a forked slave process, the result is read
+#     back through a pipe).  Timeout the connections properly, try up
+#     to three times (timeouts at 10, 20, and 30 seconds).  If forks
+#     fail, sleep for a while.  The URLs are tried out in random order.
+# (3) Collect and display the results: how far behind the URL is,
+#     what was the response time.
+#
+# This script very probably requires a UNIX to run since it uses fork,
+# signals, pipes, and select().
+#
+
+require 5.6.1;
+
+use strict;
+use warnings;
+
+my $DEBUG = $ENV{DEBUG};
+
+use File::Path  qw(rmtree);
+use File::Spec;
+use File::Temp	qw(tempfile tempdir);
+use Getopt::Long;
+use Time::HiRes	'time';
+
+my $verbose = '';
+
+GetOptions( 'verbose' => \$verbose );
+
+my $tempdir = tempdir(File::Spec->catdir(File::Spec->tmpdir(), "XXXXXXXX"));
+
+print "tempdir = $tempdir\n" if $DEBUG;
+
+# Paranoia check.
+unless(-d $tempdir && $tempdir =~ m:^/tmp/:) {
+    print "tempdir '$tempdir' doesn't look right, aborting.\n";
+    exit(1);
+}
+
+sub cleanup {
+    if (fork() == 0) {
+	sleep(600);
+	chdir("/") && rmtree($tempdir);
+    }
+}
+
+&main;
+
+sub main {
+    my $status;
+
+    $status = 
+	check_mirrors
+	    (
+	     configfile  => "/home/ask/cpan/CPAN/MIRRORED.BY",
+	     timeouts    => [10, 20, 30],
+	     concurrency => 16,
+	    );
+
+    show_results($status);
+
+    cleanup();
+
+    exit(0);
+}
+
+sub debug {
+    return unless $verbose;
+    print STDERR @_;
+}
+
+sub get_ftp {
+    my ($url, $timeout) = @_;
+
+    my ($host, $path) = ($url =~ m!^ftp://([^/]+)(/?.*)!);
+
+    $| = 1;
+    
+    use Net::FTP;
+
+    my $ftp;
+
+    unless ($ftp =
+	  Net::FTP->new($host,
+			Timeout => $timeout,
+			Passive => 1,
+			Debug   => $DEBUG)) {
+	return (0, "connect: $@");
+    }
+
+    unless ($ftp->login('anonymous', 'cpan@perl.org')) {
+	return (0, "login: $!");
+    }
+    
+    unless ($ftp->cwd($path)) {
+	$ftp->quit;
+	return (0, "cwd: $!");
+    }
+    
+    my ($fh, $filename) = tempfile("XXXXXXXX", DIR => $tempdir, UNLINK => 1);
+
+    my $start = time();
+    
+    unless ($ftp->get('MIRRORING.FROM', $filename)) {
+	return (0, "get: $!");
+    }
+    
+    unless ($ftp->quit) {
+	close($fh);
+	return (0, "quit");
+    }
+    
+    my $stop = time();
+    
+    return (1, $stop - $start, $fh, $filename);
+}
+
+sub get_http {
+    my ($url, $timeout) = @_;
+    
+    use LWP::Debug;
+    LWP::Debug::level('+trace') if $DEBUG;
+    
+    require HTTP::Request;
+    require LWP::UserAgent;
+    
+    $url .= "/" unless $url =~ m!/$!;
+
+    my $request = HTTP::Request->new(GET => "${url}MIRRORING.FROM");
+    return (0, 0) unless $request;
+    
+    my $ua = LWP::UserAgent->new(timeout => $timeout);
+    return (0, 0) unless $ua;
+
+    my ($fh, $filename) = tempfile("XXXXXXXX", DIR => $tempdir, UNLINK => 1);
+
+    my $start = time();
+
+    my $response = $ua->request($request, $filename);
+
+    my $stop  = time();
+
+    if ($response->is_success) {
+	return (1, $stop - $start, $fh, $filename);
+    } else {
+	close($fh);
+	unlink($filename);
+        my $status = $response->status_line;
+        $status =~ s/\s+\z//;
+        return (0, $status);
+    }
+}
+ 
+sub get_urls {
+    my $configfile = shift;
+    my %url;
+	     
+    if (open(my $configfh, $configfile)) {
+	local $/;
+		 
+	my $slurp = <$configfh>;
+		 
+	close($configfh);
+		 
+	while ($slurp =~
+	       /^([\w\-]+(?:\.[\w\-]+)+): # a hostname (id for site)
+	       ((?:\s+\w+\s*=\s*".*?")+)  # attr="value"
+	       /mgx) {
+	    my ($hostid, $hostconfig) = ($1, $2);
+	    my %hostconfig;
+	    while ($hostconfig =~ /(\w+)\s*=\s*"(.*?)"/mg) {
+		$hostconfig{$1} = $2;
+	    }
+	    foreach my $urlid (qw(dst_ftp dst_http)) {
+		if (exists $hostconfig{$urlid} &&
+		    length $hostconfig{$urlid}) {
+		    $url{$hostconfig{$urlid}} =
+			[ $hostid, \%hostconfig ];
+		}
+	    }
+	}
+    } else {
+	warn qq($0: open "$configfile" failed: $!\n);
+    }
+    
+    return \%url;
+}
+
+sub check_url_with_timeout {
+    my ($wfh, $url, $timeout) = @_;
+
+    my $got   = 0;
+    my $epoch = 0;
+    my $info  = 0;
+    my ($fh, $filename);
+		    
+    local $SIG{ALRM} =
+	sub {
+	    print $wfh "$url 0 0 0 alarm\n";
+	    if (defined $fh && defined $filename) {
+		close($fh);
+		unlink($filename);
+	    }
+	    exit(1);
+	};
+    alarm($timeout);
+		    
+    my $start = int(time()); # the epoch time is integral, too
+
+    if ($url =~ m|^ftp://|) {
+	($got, $info, $fh, $filename) = get_ftp($url, $timeout);
+    } elsif ($url =~ m|^https?://|) {
+	($got, $info, $fh, $filename) = get_http($url, $timeout);
+    }
+		    
+    if ($got) {
+	my $sawend;
+	
+	while (<$fh>) {
+	    if (/UNIX epoch seconds = (\d+)/) {
+		$epoch = $1;
+	    } elsif (/^\# End of MIRRORING\.FROM/) {
+		$sawend = 1;
+	    }
+	}
+
+	unless ($sawend) {
+	    ($got, $epoch, $info) = (0, 0, 0);
+	}
+    }
+    
+    if (defined $fh && defined $filename) {
+	close($fh);
+	unlink($filename);
+    }
+
+    $start = 0 unless $epoch; # Never mind, then.
+
+    debug "# $url $got $epoch $start $info $timeout\n";
+    print $wfh "$url $got $epoch $start $info\n";
+    
+    exit($got ? 0 : 1);
+}
+
+sub check_urls_with_timeout {
+    my ($urls, $timeout, $concurrency, $status) = @_;
+
+    my %todo = %$urls;
+    my %fail;
+
+    my $max = $concurrency;
+    my $act = 0;
+    my $rin = '';
+    my %rfh;
+    my %wfh;
+    my %url;
+    my %pid;
+    my $pid;
+    
+    while (keys %todo) {
+	while ($act < $max && $act < keys %todo) {
+	    my ($rfh, $wfh);
+	    
+	    if (pipe($rfh, $wfh)) {
+		my $rfd = fileno($rfh);
+
+		$rfh{$rfd} = $rfh;
+		vec($rin, $rfd, 1) = 1;
+		$wfh{$rfd} = $wfh;
+		
+		my @urls = grep { $_ ne '' } keys %todo;
+		my $url  = $urls[rand @urls];
+		
+		delete $todo{$url};
+
+		unless ($url =~ m{^(https?|ftp)://}) {
+		    warn "skipping bad url '$url'";
+		    next;
+		}
+
+		$status->{$url}->{host} = $urls->{$url}->[0];
+		
+		$url{$rfd} = $url;
+		
+		$pid = fork();
+		
+		if (defined $pid) {
+		    if ($pid) {
+			$pid{$rfd} = $pid;
+			$act++;
+		    } else {
+			check_url_with_timeout($wfh, $url, $timeout);
+		    }
+		} else {
+		    warn "$0: fork failed: $!\n";
+		    sleep(2); # melting CPU? We're patient!
+		    
+		    # Reinstate the URL.
+		    
+		    delete $rfh{$rfd};
+		    vec($rin, $rfd, 1) = 0;
+		    delete $wfh{$rfd};
+		    
+		    $todo{$url} = $urls->{$url};
+
+		    delete $url{$rfd};
+		}
+	    } else {
+		warn "$0: pipe failed: $!\n";
+	    }
+	}
+	
+	debug "# todo ", scalar keys %todo, " active $act fail ", scalar keys %fail, "\n";
+
+	my $rout;
+	my $nfound = select($rout = $rin, undef, undef, $timeout);
+	
+	if ($nfound) {
+	    while ($nfound--) {
+                my $bits = unpack("b*", $rout);
+		my $rfd = index $bits, 1, 0;
+		my $url = $url{$rfd}; 
+
+		next unless $url;  # Shouldn't happen...
+
+		vec($rin, $rfd, 1) = vec($rout, $rfd, 1) = 0;
+
+		my $result = readline($rfh{$rfd});
+		my ($got, $epoch, $start, $info);
+		if (defined $result) {
+		    chomp($result);
+		    ($url, $got, $epoch, $start, $info) =
+			($result =~ /^\s*(\S+)\s+(0|1)\s+(\d+)\s+(\d+)\s+(.*)/);
+		    unless (defined $got) {
+			warn "bad result '$result'\n";
+			next;
+		    }
+		} else {
+		    ($got, $epoch, $start, $info) = (0, 0, 0, 0);
+		}
+
+		unless ($got) {
+		    $fail{$url} = $urls->{$url};
+		}
+		 
+		$status->{$url}->{got}   = $got;
+		$status->{$url}->{epoch} = $epoch;
+		$status->{$url}->{lag}   = $start - $epoch;
+		$status->{$url}->{info}  = $info;
+
+		delete $rfh{$rfd};
+		delete $wfh{$rfd};
+
+		delete $url{$rfd};
+
+		kill 'TERM', $pid{$rfd};
+		waitpid($pid{$rfd}, 0);
+		delete $pid{$rfd};
+
+		$act--;
+	    }
+	} else {
+	    %rfh = %wfh = ();
+	    $rin = '';
+	    
+	    my @fail = values %url;
+	    @fail{@fail} = @{$urls}{@fail};
+	    for my $url (@fail) {
+		debug "# $url 0 0 0 $timeout\n";
+		$status->{$url}->{got}    = 0;
+		$status->{$url}->{epoch}  = 0;
+		$status->{$url}->{lag}    = 0;
+		$status->{$url}->{info}   = 0;
+	    }
+	    %url = ();
+	    
+	    my @pid = values %pid;
+	    kill 'TERM', @pid;
+	    for my $pid (@pid) { waitpid($pid, 0) }
+	    %pid = ();
+	    
+	    $act = 0;
+	}
+    }
+    
+    %$urls = %fail;
+}
+
+sub check_urls_with_timeouts {
+    my ($urls, $timeouts, $concurrency, $status) = @_;
+
+    for my $timeout (@$timeouts) {
+	check_urls_with_timeout($urls, $timeout, $concurrency, $status);
+	last unless keys %$urls;
+    }
+}
+
+sub check_mirrors {
+    my %config = @_;
+
+    my $urls = get_urls($config{configfile});
+
+    my %status;
+
+    check_urls_with_timeouts($urls,
+			     $config{timeouts},
+			     $config{concurrency},
+			     \%status);
+
+    return \%status;
+}
+
+sub show_results {
+    my $status = shift;
+
+    my @good;
+    my @fail;
+
+    for my $url (keys %$status) {
+	if ($status->{$url}->{got}) {
+	    push @good,
+	         [$status->{$url}->{host},
+		  $url || "",
+		  $status->{$url}->{epoch},
+		  $status->{$url}->{lag},
+		  $status->{$url}->{info}];
+	} else {
+	    push @fail,
+                 [$status->{$url}->{host},
+		  $url || "",
+		  $status->{$url}->{epoch},
+		  $status->{$url}->{lag},
+		  $status->{$url}->{info}];
+	}
+    }
+
+    @good = sort { $a->[0] cmp $b->[0] || $a->[1] cmp $b->[1] } @good;
+    @fail = sort { $a->[0] cmp $b->[0] || $a->[1] cmp $b->[1] } @fail;
+
+    print "OK @$_ \n"   for @good;
+    print "FAIL @$_ \n" for @fail;
+}
+

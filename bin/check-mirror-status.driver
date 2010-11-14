@@ -1,0 +1,14 @@
+#!/bin/sh
+
+LOGDIR=~/cpan/log/clients/`date +%Y%m`;
+
+mkdir -p $LOGDIR
+
+LOGFILE=$LOGDIR/`date +%Y%m%d.%H%M%S`;
+
+~/cpan/bin/check-mirror-status > $LOGFILE
+
+# cp $LOGFILE /pub/languages/perl/.cpan_status/mirror.status.fi
+
+exit 0
+
