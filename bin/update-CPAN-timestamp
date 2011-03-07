@@ -1,0 +1,9 @@
+#!/bin/sh
+CPAN=$HOME/cpan/CPAN
+export CPAN
+cd $CPAN || exit 1
+
+# this runs frequently (every 30 minutes or so).
+perl -e 'print time, " ", scalar gmtime, "\n"' > $CPAN/indices/timestamp.txt
+
+
