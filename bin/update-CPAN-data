@@ -1,0 +1,49 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use JSON ();
+use File::Slurp qw(read_file write_file);
+use Digest::SHA;
+
+my $json = JSON->new->pretty;
+
+my %data;
+
+{
+    my $size_k = `du -sk CPAN` || 1;
+    $size_k =~ s/\s+.*//sm;
+    my $size_m = sprintf "%i", $size_k / 1024;
+    my $size_g = sprintf "%.1f", $size_k / ( 1024 * 1024 );
+
+    $data{disk_usage} = {
+        #kb => $size_k,
+        mb => $size_m,
+        gb => $size_g,
+    };
+}
+
+{
+    my $mirrors = $json->decode( scalar read_file( 'CPAN/indices/mirrors.json' ) );
+    $data{mirrors}->{count} = scalar @$mirrors;
+}
+
+{
+    my $authors_count = `grep -c "^<a id=" CPAN/authors/00whois.html|head -1`
+      or die "Could not count authors";
+    chomp $authors_count;
+    $data{authors}->{count} = $authors_count;
+}
+
+write_file( "tmp/cpan-stats.json", $json->encode(\%data) );
+
+my $sha_old = Digest::SHA->new;
+my $sha_new = Digest::SHA->new;
+
+$sha_old->addfile("CPAN/indices/cpan-stats.json");
+$sha_new->addfile("tmp/cpan-stats.json");
+
+exit 0 if $sha_old->hexdigest eq $sha_new->hexdigest;
+
+rename "tmp/cpan-stats.json", "CPAN/indices/cpan-stats.json"
+  or die "Could not rename tmp file: $!";
+

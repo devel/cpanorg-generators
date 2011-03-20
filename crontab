@@ -1,0 +1,25 @@
+PATH=/home/mirror/perl5/bin:/home/mirror/perl5/perlbrew/bin:/home/mirror/perl5/perlbrew/perls/perl-5.12.3/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/mirror/bin
+PATH_WITHOUT_PERLBREW=/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin
+PERLBREW_PATH=/home/mirror/perl5/perlbrew/bin:/home/mirror/perl5/perlbrew/perls/perl-5.12.3/bin
+PERL5LIB="/home/mirror/perl5/lib/perl5/x86_64-linux:/home/mirror/perl5/lib/perl5:$PERL5LIB"
+TZ=UTC
+
+@reboot ~/bin/svscan_boot &
+
+01 * * * * cd cpan; ./bin/update-CPAN-data
+* * * * * cd cpan-mirrors; make update
+
+# mirror checking 
+##07 0,6,12,18 * * * cd ~/cpan; ./bin/check-mirror-status.driver 
+##50 3 * * 0 cd ~/cpan; ./bin/client-status-gripe --sendmail
+
+23 */4 * * * cd cpan; bin/update-CPAN-indices
+*/5 * * * * cd cpan; bin/update-CPAN-timestamp
+10 *   * * * cd cpan; bin/update-CPAN-MIRRORING.FROM > ~/tmp/mf.2 && mv ~/tmp/mf.2 CPAN/MIRRORING.FROM 
+34 */12   * * * cd cpan; bin/update-CPAN-RECENT
+20 1   * * * cd cpan; bin/perl-label.sh > log/perl-label.latest
+
+0 0 26 10 * /bin/date | mailx -s "Happy Birthday CPAN" ask@develooper.com
+
+
+
