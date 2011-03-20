@@ -1,6 +1,6 @@
 #!/bin/sh
 
-HOME=~ask
+HOME=~
 export HOME
 PATH=$HOME/cpan/bin:$PATH
 export PATH
