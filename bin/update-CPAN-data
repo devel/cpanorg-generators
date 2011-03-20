@@ -34,6 +34,16 @@ my %data;
     $data{authors}->{count} = $authors_count;
 }
 
+{
+    my $title = `grep '<h1>' CPAN/modules/01modules.index.html|head -1`
+      or die "Could not get title from modules list";
+    my $modules_count = ($title =~ m/\s+(\d+)/)[0];
+    chomp $modules_count;
+    $data{modules}->{count} = $modules_count;
+}
+
+
+
 write_file( "tmp/cpan-stats.json", $json->encode(\%data) );
 
 my $sha_old = Digest::SHA->new;
