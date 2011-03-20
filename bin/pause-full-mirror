@@ -1,0 +1,25 @@
+#!/bin/bash
+
+CPATH=/cpan/CPAN
+
+RS="rsync -avH"
+echo "Mirroring modules"
+date
+$RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ $CPATH/modules/
+
+echo "Mirroring authors"
+date
+$RS --delete-after abh@pause.perl.org::PAUSE/authors/ $CPATH/authors/
+
+echo "Mirroring scripts"
+date
+$RS abh@pause.perl.org::scripts/ $CPATH/scripts/
+
+touch $CPATH/../tmp/pause-full.state
+
+echo "`date` Done; sleeping"
+
+sleep 43000
+
+
+
