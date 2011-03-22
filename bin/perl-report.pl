@@ -19,7 +19,7 @@ if (open(my $f2, $ARGV[1])) {
     while (<$f2>) {
 	print;
 	if (/<!-- LATEST_RELEASES -->/) {
-	    print qq[<table border="1">\n<th><td>Release</td><td>File</td><td>Type</td><td>Age</td></th>\n];
+	    print qq[<table border="1">\n<tr><th>Release</th><th>File</th><th>Type</th><th>Age</th></tr>\n];
 	    for my $r (@P) {
 		my ($branch, $release, $file, $type, $pretty) = @$r;
 		next unless $branch =~ /^\d/;
