@@ -3,6 +3,10 @@
 CPATH=/cpan/CPAN
 
 RS="rsync -avH"
+
+while `true`;
+  do
+
 echo "Mirroring modules"
 date
 $RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ $CPATH/modules/
@@ -19,7 +23,8 @@ touch $CPATH/../tmp/pause-full.state
 
 echo "`date` Done; sleeping"
 
-sleep 43000
+sleep 7300
 
+done
 
 

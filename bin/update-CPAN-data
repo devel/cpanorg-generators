@@ -4,6 +4,7 @@ use warnings;
 use JSON ();
 use File::Slurp qw(read_file write_file);
 use Digest::SHA;
+use LWP::Simple qw(get);
 
 my $json = JSON->new->pretty;
 
@@ -27,22 +28,16 @@ my %data;
     $data{mirrors}->{count} = scalar @$mirrors;
 }
 
-{
-    my $authors_count = `grep -c "^<a id=" CPAN/authors/00whois.html|head -1`
-      or die "Could not count authors";
-    chomp $authors_count;
-    $data{authors}->{count} = $authors_count;
-}
 
-{
-    my $title = `grep '<h1>' CPAN/modules/01modules.index.html|head -1`
-      or die "Could not get title from modules list";
-    my $modules_count = ($title =~ m/\s+(\d+)/)[0];
-    chomp $modules_count;
-    $data{modules}->{count} = $modules_count;
-}
+my $tucs_data = get("http://search.cpan.org/api/cpan_stats")
+    or die "Could not get stats from tucs";
 
+my $tucs = $json->decode($tucs_data) or die "Could not decode stats from tucs";
 
+$data{authors}->{count} = $tucs->{authors};
+$data{modules}->{count} = $tucs->{modules};
+$data{distributions}->{uploads}->{count} = $tucs->{uploads};
+$data{distributions}->{count} = $tucs->{distributions};
 
 write_file( "tmp/cpan-stats.json", $json->encode(\%data) );
 
