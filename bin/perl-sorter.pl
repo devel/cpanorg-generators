@@ -11,17 +11,21 @@ use strict;
 # $perl->{minor} = 14;
 # $perl->{iota} = 1;
 #
-# /src/ - Create/symlink the latest STABLE _minor_ version to:
-# /src/<major.minor>.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
-# /src/<major.minor>.tar.bz2[.md5.txt|.sha1.txt|.sha256.txt]
+# /src/ - symlink the STABLE versions:
+# /src/<major.minor.iota>.tar.gz
+# /src/<major.minor.iota>.tar.bz2
 #
 # /src/5.0/ - put the _full_ versions of everything here:
 # /src/5.0/<major.minor.iota>.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
 # /src/5.0/<major.minor.iota>.tar.bz2[.md5.txt|.sha1.txt|.sha256.txt]
 # /indices/perl_version.json - all meta data (including sha1 and bz2)
+#
+# /src/stable.tar.gz
+# /src/latest.tar.gz
 
 use Carp qw/confess/;
 use Getopt::Long;
+use File::Slurp;
 use File::Basename qw/dirname basename/;
 
 use JSON ();
@@ -40,16 +44,11 @@ foreach my $dir ( '../src', '../cpla', '../../CPAN/src' ) {
 
 my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
 
-# Don't delete anything from now on
-# foreach my $cmd (
+# Run once to clear out old files - check for others as well
 #     "rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*",
 #     "rm -f *_is_* latest_* devel_* maint_* stable_*",
 #     "rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_*",
-#     "rm -f 5.0/devel/*_is_* 5.0/maint/*_is_*",
-#     )
-# {
-#     run_cmd($cmd);
-# }
+#     "rm -f 5.0/devel 5.0/maint",
 
 # check disk for files
 foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
@@ -70,47 +69,52 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
     }
 }
 
-# Clear out all old content:
-# As the script now removes symlinks before creating new
-# this might not be needed?
-#for my $c (qw(md5 sha1 sha256)) {
-#    my $cmd = "rm -f *.$c.txt 5.0/*.$c.txt 5.0/*/*.$c.txt";
-#    run_cmd($cmd);
-#}
-
 # Create file / symlinks for ALL versions in /src/5.0/
+# src/5.0/perl-5.12.4-RC1.tar.bz2
+# src/5.0/perl-5.12.4-RC1.tar.bz2.md5.txt
+# src/5.0/perl-5.12.4-RC1.tar.bz2.sha1.txt
+# src/5.0/perl-5.12.4-RC1.tar.bz2.sha256.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz
+# src/5.0/perl-5.12.4-RC1.tar.gz.md5.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz.sha1.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz.sha256.txt
+
+# Old format for md5 sha1 sha256 was:
+# 8d8bf968439fcf4a0965c335d1ccd981  5.0/perl-5.14.1-RC1.tar.gz
+# Now just putting the secrity data as think the 5.0/ was a bug?
+# 8d8bf968439fcf4a0965c335d1ccd981
+
 foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
 
     # For a perl e.g. perl-5.12.4-RC1
     # create or symlink:
     foreach my $file ( @{ $perl->{files} } ) {
 
-        # src/5.0/perl-5.12.4-RC1.tar.bz2
-        # src/5.0/perl-5.12.4-RC1.tar.bz2.md5.txt
-        # src/5.0/perl-5.12.4-RC1.tar.bz2.sha1.txt
-        # src/5.0/perl-5.12.4-RC1.tar.bz2.sha256.txt
-        # src/5.0/perl-5.12.4-RC1.tar.gz
-        # src/5.0/perl-5.12.4-RC1.tar.gz.md5.txt
-        # src/5.0/perl-5.12.4-RC1.tar.gz.sha1.txt
-        # src/5.0/perl-5.12.4-RC1.tar.gz.sha256.txt
-
-        my $out = "src/5.0/" . $file->{file};
+        my $out   = "src/5.0/" . $file->{file};
 
         foreach my $security (qw(md5 sha1 sha256)) {
 
-            # Old format was:
-            # 8d8bf968439fcf4a0965c335d1ccd981  5.0/perl-5.14.1-RC1.tar.gz
-            # Now just putting the secrity data as think the 5.0/ was a bug?
-            # 8d8bf968439fcf4a0965c335d1ccd981
-            print_file( "${out}.${security}.txt", $file->{$security} );
+            print_file_if_different( "${out}.${security}.txt",
+                $file->{$security} );
         }
         create_symlink( $file->{filepath}, $out );
+
+		# only link stable versions directly from src/
+		next unless $perl->{status} eq 'stable';
+        my $out_src = "src/" . $file->{file};
+        create_symlink( $file->{filepath}, '../' .$out );
 
     }
 }
 
-sub print_file {
+
+sub print_file_if_different {
     my ( $file, $data ) = @_;
+
+    if ( -r $file ) {
+        my $content = read_file($file);
+        return if $content eq $data;
+    }
 
     open my $fh, ">:utf8", "$file"
         or die "Could not open data/$file: $!";
