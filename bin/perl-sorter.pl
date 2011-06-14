@@ -29,8 +29,18 @@ foreach my $dir ( '../src', '../cpla', '../../CPAN/src' ) {
 
 my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
 
+foreach my $cmd (
+    "rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*",
+    "rm -f *_is_* latest_* devel_* maint_* stable_*",
+    "rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_*",
+    "rm -f 5.0/devel/*_is_* 5.0/maint/*_is_*",
+    )
+{
+    run_cmd($cmd);
+}
+
 # check disk for files
-for my $perl ( @{$perl_versions}, @{$perl_testing} ) {
+foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
     my $id = $perl->{cpanid};
 
     if ( $id =~ /^(.)(.)/ ) {
@@ -52,41 +62,35 @@ for my $perl ( @{$perl_versions}, @{$perl_testing} ) {
 #    run_cmd($cmd);
 #}
 
-foreach my $cmd (
-    "rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*",
-    "rm -f *_is_* latest_* devel_* maint_* stable_*",
-    "rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_*",
-    "rm -f 5.0/devel/*_is_* 5.0/maint/*_is_*",
-    )
-{
-    run_cmd($cmd);
+foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
+
+    # For a perl e.g. perl-5.12.3-RC1
+    # create or symlink:
+    # src/5.0/perl-5.12.4-RC1.tar.bz2
+    # src/5.0/perl-5.12.4-RC1.tar.bz2.md5.txt
+    # src/5.0/perl-5.12.4-RC1.tar.bz2.sha1.txt
+    # src/5.0/perl-5.12.4-RC1.tar.bz2.sha256.txt
+    # src/5.0/perl-5.12.4-RC1.tar.gz
+    # src/5.0/perl-5.12.4-RC1.tar.gz.md5.txt
+    # src/5.0/perl-5.12.4-RC1.tar.gz.sha1.txt
+    # src/5.0/perl-5.12.4-RC1.tar.gz.sha256.txt
+
 }
 
+# Contents of these files is a version number e.g. 5.13.11
 
-{
-    # Contents of these files is a version number e.g. 5.13.11
-    
+# create 5.0/latest_<major.minor version> e.g. latest_5.14
 
-    # create 5.0/latest_<major.minor version> e.g. latest_5.14
+# create 5.0/latest_devel
 
-    # create 5.0/latest_devel
-    
-    # create 5.0/latest_maint
+# create 5.0/latest_maint
 
+# create 5.0/devel/latest_<major.minor>
+# create 5.0/maint/latest_<major.minor>
 
-    # create 5.0/maint/latest_<major.minor
-    
-    # create 5.0/perl<major.minor.iota...>.tar.gz
-    # and the .md5.txt, sha1.txt, sha256.txt textfiles
-    # for every perl 5 version (including RC's)
-    
-    
-}
-
-
-
-
-
+# create 5.0/perl<major.minor.iota...>.tar.gz
+# and the .md5.txt, sha1.txt, sha256.txt textfiles
+# for every perl 5 version (including RC's)
 
 sub emit_unlink {
     my ($file) = @_;
@@ -164,73 +168,71 @@ sub emit_touch {
     }
 }
 
-if ( defined $Options{update_script} ) {
-    my $fn = $Options{update_script};
+my $fn = 'out_file.sh';
+my @Perl;
+if ( open( my $fh, ">", $fn ) ) {
+    select $fh;
 
-    if ( open( my $fh, ">", $fn ) ) {
-        select $fh;
+    for my $p (@Perl) {
+        my ( $file, $lang, $major, $minor, $iota, $type, $mtime, $md5, $sha1,
+            $sha256, $latest, $obsoleted, $latest_of_type, $ago )
+            = @$p;
+        printf qq[: "%s"\n], join( ":", @$p );
+        my %info = (
+            mtime  => $mtime,
+            md5    => $md5,
+            sha1   => $sha1,
+            sha256 => $sha256
+        );
+        emit_symlink( $file, \%info, "5.0" );
+        if ( $latest ne "-" ) {
+            if ( $obsoleted eq "-" ) {
+                emit_symlink( $file, \%info );
+                if ( $latest_of_type ne "-" ) {
+                    my $release = "$lang.$major.$minor";
+                    emit_symlink_typed( $file, $type, \%info );
+                    emit_symlink_typed( $file, $type, \%info, "5.0" );
+                    if ( $type eq "maint" || $type eq "devel" ) {
+                        emit_symlink( $file, \%info, "5.0/$type" );
+                        emit_symlink_typed( $file, $type, \%info,
+                            "5.0/$type" );
+                    }
+                    if ( $type eq "maint" ) {
+                        for my $l (qw(stable latest)) {
+                            emit_symlink_typed( $file, $l, \%info );
+                        }
+                    }
+                    my $t0 = "latest_${latest}_is_$release";
+                    my $t1 = "latest_${type}_is_$release";
+                    my $t2 = "${type}_is_$release";
+                    emit_touch( $t0, \%info );
+                    emit_touch( $t1, \%info );
+                    emit_touch( $t2, \%info );
+                    if ( $type eq "maint" || $type eq "devel" ) {
 
-        for my $p (@Perl) {
-            my ( $file, $lang, $major, $minor, $iota, $type, $mtime, $md5,
-                $sha1, $sha256, $latest, $obsoleted, $latest_of_type, $ago )
-                = @$p;
-            printf qq[: "%s"\n], join( ":", @$p );
-            my %info = (
-                mtime  => $mtime,
-                md5    => $md5,
-                sha1   => $sha1,
-                sha256 => $sha256
-            );
-            emit_symlink( $file, \%info, "5.0" );
-            if ( $latest ne "-" ) {
-                if ( $obsoleted eq "-" ) {
-                    emit_symlink( $file, \%info );
-                    if ( $latest_of_type ne "-" ) {
-                        my $release = "$lang.$major.$minor";
-                        emit_symlink_typed( $file, $type, \%info );
-                        emit_symlink_typed( $file, $type, \%info, "5.0" );
-                        if ( $type eq "maint" || $type eq "devel" ) {
-                            emit_symlink( $file, \%info, "5.0/$type" );
-                            emit_symlink_typed( $file, $type, \%info,
-                                "5.0/$type" );
+                        for my $t ( $t0, $t1, $t2 ) {
+                            emit_touch( "5.0/$t",       \%info );
+                            emit_touch( "5.0/$type/$t", \%info );
                         }
-                        if ( $type eq "maint" ) {
-                            for my $l (qw(stable latest)) {
-                                emit_symlink_typed( $file, $l, \%info );
-                            }
-                        }
-                        my $t0 = "latest_${latest}_is_$release";
-                        my $t1 = "latest_${type}_is_$release";
-                        my $t2 = "${type}_is_$release";
-                        emit_touch( $t0, \%info );
-                        emit_touch( $t1, \%info );
-                        emit_touch( $t2, \%info );
-                        if ( $type eq "maint" || $type eq "devel" ) {
-
-                            for my $t ( $t0, $t1, $t2 ) {
-                                emit_touch( "5.0/$t",       \%info );
-                                emit_touch( "5.0/$type/$t", \%info );
-                            }
-                        }
-                        my $t3 = "latest_${latest}";
-                        my $t4 = "latest_${type}";
-                        emit_echo( $release, $t3, \%info );
-                        emit_echo( $release, $t4, \%info );
-                        if ( $type eq "maint" || $type eq "devel" ) {
-                            for my $t ( $t3, $t4 ) {
-                                emit_echo( $release, "5.0/$t",       \%info );
-                                emit_echo( $release, "5.0/$type/$t", \%info );
-                            }
+                    }
+                    my $t3 = "latest_${latest}";
+                    my $t4 = "latest_${type}";
+                    emit_echo( $release, $t3, \%info );
+                    emit_echo( $release, $t4, \%info );
+                    if ( $type eq "maint" || $type eq "devel" ) {
+                        for my $t ( $t3, $t4 ) {
+                            emit_echo( $release, "5.0/$t",       \%info );
+                            emit_echo( $release, "5.0/$type/$t", \%info );
                         }
                     }
                 }
             }
         }
-        print "exit 0\n";
-        select STDOUT;
-    } else {
-        die qq[$0: Failed to create "$fn": $!];
     }
+    print "exit 0\n";
+    select STDOUT;
+} else {
+    die qq[$0: Failed to create "$fn": $!];
 }
 
 exit(0);
