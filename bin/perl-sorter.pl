@@ -12,54 +12,44 @@ use strict;
 use Carp qw/confess/;
 use Getopt::Long;
 
+use JSON ();
+use LWP::Simple qw(get);
+
+my $json = JSON->new->pretty;
+
 sub usage {
     die <<__EOF__;
 $0: Usage:
-$0 [--update_script=script.sh] [--latest_report=latest.txt]
+$0 [--update_script=script.sh]
 __EOF__
 }
 
 my %Options;
 
 usage() unless GetOptions('update_script=s' =>
-			  \$Options{update_script},
-			  'latest_report=s' =>
-			  \$Options{latest_report});
+			  \$Options{update_script},);
 
 use File::Basename qw/dirname basename/;
 
-my @Pumpkin5;
-
-my $Pumpkin5 = "http://pause.perl.org/pause/query?ACTION=who_pumpkin;OF=YAML";
-
-$ENV{PATH} = "/usr/local/bin:$ENV{PATH}";  # For curl.
-$ENV{PATH} = "/opt/csw/bin:$ENV{PATH}";  # For openssl.
-$ENV{PATH} = "/opt/sfw/bin:$ENV{PATH}";  # For openssl.
-
-if (open(my $fh, "curl -s '$Pumpkin5'|")) {
-    while (<$fh>) {
-	if (/^- ([\w-]+)$/) {
-	    push @Pumpkin5, $1;
-	}
-    }
-}
-
-die qq[$0: No Perl5 pumpkins found\n] unless @Pumpkin5;
+my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
 
 my @Perl;
-
-for my $id (@Pumpkin5) {
+for my $perl (@{$perl_versions}, @{$perl_testing}) {
+    my $id = $perl->{cpanid};
+    
     if ($id =~ /^(.)(.)/) {
-	my $path = "CPAN/authors/id/$1/$1$2/$id";
-	my @glob;
-	push @glob, glob("$path/perl-5.*.tar.*");
-	push @glob, glob("$path/perl5.*.tar.*");
-	push @Perl, @glob;
+	    my $path = "CPAN/authors/id/$1/$1$2/$id";
+	    my $fileroot = "$path/" . $perl->{distvname};
+	    my @glob;
+	    push @glob, glob("${fileroot}.*");
+	    push @Perl, @glob;
     }
 }
 
-@Perl = grep { ! /-bindist\d/ } @Perl;
+# Not sure what that was checking, but don't think needed
+# @Perl = grep { ! /-bindist\d/ } @Perl;
 
+# Shouldn't need any more:
 sub perl_version_extractor {
     my $perl = shift;
     if ($perl =~ /perl-5\.(\d+)\.(\d+)(?:-(?:RC|TRIAL)(\d+))?\.tar\.(?:gz|bz2)$/) {
@@ -69,6 +59,7 @@ sub perl_version_extractor {
     }
 }
 
+# Shouldn't need any more:
 sub perl_version_classifier {
     my $perl = shift;
     my ($lang, $major, $minor, $iota) = perl_version_extractor($perl);
@@ -309,6 +300,9 @@ sub emit_touch {
 
 if (defined $Options{update_script}) {
     my $fn = $Options{update_script};
+    
+    
+    
     if (open(my $fh, ">", $fn)) {
 	select $fh;
 	print "test -d ../src         || exit 1\n";
@@ -414,5 +408,101 @@ if (defined $Options{latest_report}) {
 	die qq[$0: Failed to create "$fn": $!];
     }
 }
+
+
+#### NEW CLEANER CODE....
+sub sort_versions {
+    my $list = shift;
+
+    my @sorted = sort {
+               $b->{version_major} <=> $a->{version_major}
+            || int( $b->{version_minor} ) <=> int( $a->{version_minor} )
+            || $b->{version_iota} <=> $a->{version_iota}
+    } @{$list};
+
+    return \@sorted;
+
+}
+
+sub extract_first_per_version_in_list {
+    my $versions = shift;
+
+    my $lookup = {};
+    foreach my $version ( @{$versions} ) {
+        my $minor_version = $version->{version_major} . '.'
+            . int( $version->{version_minor} );
+
+        $lookup->{$minor_version} = $version
+            unless $lookup->{$minor_version};
+    }
+    return $lookup;
+}
+
+sub fetch_perl_version_data {
+    my $perl_dist_url = "http://search.cpan.org/api/dist/perl";
+
+    my $filename           = 'perl_version_all.json';
+
+    # See what we have on disk
+    my $disk_json = '';
+    $disk_json = read_file("data/$filename")
+        if -r "data/$filename";
+
+    my $cpan_json = get($perl_dist_url);
+    die "Unable to fetch $perl_dist_url" unless $cpan_json;
+
+    if ( $cpan_json eq $disk_json ) {
+
+        # Data has not changed so don't need to do anything
+        exit;
+    } else {
+
+        # Save for next fetch
+        print_file( $filename, $cpan_json  );
+    }
+
+    my $data = $json->decode($cpan_json);
+
+    my @perls;
+    my @testing;
+    foreach my $module ( @{ $data->{releases} } ) {
+        next unless $module->{authorized} eq 'true';
+
+        my $version = $module->{version};
+
+        $version =~ s/-(?:RC|TRIAL)\d+$//;
+        $module->{version_number} = $version;
+
+        my ( $major, $minor, $iota ) = split( '[\._]', $version );
+        $module->{version_major} = $major;
+        $module->{version_minor} = int($minor);
+        $module->{version_iota}  = int( $iota || '0' );
+
+        $module->{type}
+            = $module->{status} eq 'testing'
+            ? 'Devel'
+            : 'Maint';
+
+        # TODO: Ask - please add some validation logic here
+        # so that on live it checks this exists
+        my $zip_file = $module->{distvname} . '.tar.gz';
+
+        $module->{zip_file} = $zip_file;
+        $module->{url} = "http://www.cpan.org/src/" . $module->{zip_file};
+
+        ( $module->{released_date}, $module->{released_time} )
+            = split( 'T', $module->{released} );
+
+        next if $major < 5;
+
+        if ( $module->{status} eq 'stable' ) {
+            push @perls, $module;
+        } else {
+            push @testing, $module;
+        }
+    }
+    return \@perls, \@testing;
+}
+
 
 exit(0);

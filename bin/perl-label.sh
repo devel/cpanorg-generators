@@ -6,7 +6,6 @@ cd ~/cpan || exit 1
 
 RELEASES=`mktemp /tmp/releases.XXXXXX`
 LABEL=`mktemp /tmp/label.XXXXXX`
-REPORT=`mktemp /tmp/report.XXXXXX`
 README=`mktemp /tmp/readme.XXXXXX`
 
 perl -w bin/perl-sorter.pl \
