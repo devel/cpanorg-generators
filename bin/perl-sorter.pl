@@ -33,13 +33,18 @@ use File::Basename qw/dirname basename/;
 use JSON ();
 use LWP::Simple qw(get);
 
+# Where the CPAN folder is
+my $CPAN = 'CPAN';
+
 # If debug set then shell commands are just printed and not run
 my $DEBUG = 1;
 
-my $json = JSON->new->pretty;
+my $json = JSON->new->pretty(1);
+
+mkdir('data') unless -d 'data';
 
 # check directories exist
-foreach my $dir ( '../src', '../cpla', '../../CPAN/src' ) {
+foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
     die "$dir does not exist, are you running from the right dir?"
         unless -d $dir;
 }
@@ -57,15 +62,15 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
     my $id = $perl->{cpanid};
 
     if ( $id =~ /^(.)(.)/ ) {
-        my $path     = "CPAN/authors/id/$1/$1$2/$id";
+        my $path     = "$CPAN/authors/id/$1/$1$2/$id";
         my $fileroot = "$path/" . $perl->{distvname};
-        my @files    = glob("${fileroot}.*");
+        my @files    = glob("${fileroot}.*tar.*");
 
         die "Could not find perl ${fileroot}.*" unless scalar(@files);
 
         $perl->{files} = [];
         foreach my $file (@files) {
-            my $meta = file_meta($fileroot);
+            my $meta = file_meta($file);
             push( @{ $perl->{files} }, $meta );
         }
     }
@@ -86,13 +91,15 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
 # Now just putting the secrity data as think the 5.0/ was a bug?
 # 8d8bf968439fcf4a0965c335d1ccd981
 
+my $src_root = "$CPAN/foo/src";
+
 foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
 
     # For a perl e.g. perl-5.12.4-RC1
     # create or symlink:
     foreach my $file ( @{ $perl->{files} } ) {
 
-        my $out = "src/5.0/" . $file->{file};
+        my $out = "${src_root}/5.0/" . $file->{filename};
 
         foreach my $security (qw(md5 sha1 sha256)) {
 
@@ -100,17 +107,13 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
                 $file->{$security} );
         }
 
-        # FIXME: Work out ../ multiplier
-		my $src = ( '../' x 2 ) . $out;
-        create_symlink( $file->{filepath}, $src );
+        create_symlink( $file->{file},
+            ( ( '../' x 2 ) . $file->{filename} ) );
 
         # only link stable versions directly from src/
         next unless $perl->{status} eq 'stable';
-        my $out_src = "src/" . $file->{file};
-
-        # FIXME: Work out ../ multiplier
-		$src = ( '../' x 1 ) . $out;
-        create_symlink( $file->{filepath}, $src );
+        create_symlink( $file->{file},
+            ( ( '../' x 2 ) . $file->{filename} ) );
 
     }
 }
@@ -124,7 +127,7 @@ sub print_file_if_different {
     }
 
     open my $fh, ">:utf8", "$file"
-        or die "Could not open data/$file: $!";
+        or die "Could not open $file: $!";
     print $fh $data;
     close $fh;
 
@@ -216,6 +219,8 @@ sub create_symlink {
     my ( $oldfile, $newfile ) = @_;
     die "Could not read: $oldfile" unless -r $oldfile;
 
+	warn "$oldfile -> $newfile";
+
     # Clean out old links
     unlink($newfile) if -r $newfile;
     symlink( $oldfile, $newfile );
@@ -282,6 +287,16 @@ sub file_meta {
 #### THE CODE BELOW HERE IS COPIED FROM:
 # https://github.com/perlorg/cpanorg/blob/master/bin/cpanorg_perl_releases
 # Maybe make it into a module or something?
+sub print_file {
+    my ( $file, $data ) = @_;
+
+    open my $fh, ">:utf8", "data/$file"
+        or die "Could not open data/$file: $!";
+    print $fh $data;
+    close $fh;
+
+}
+
 sub sort_versions {
     my $list = shift;
 
