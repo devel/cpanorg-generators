@@ -11,17 +11,19 @@ use strict;
 # $perl->{minor} = 14;
 # $perl->{iota} = 1;
 #
-# /src/ - symlink the STABLE versions:
+# Files to manage (either symlink or create)
+#
+# /src/ - symlink all STABLE versions:
 # /src/<major.minor.iota>.tar.gz
 # /src/<major.minor.iota>.tar.bz2
 #
-# /src/5.0/ - put the _full_ versions of everything here:
-# /src/5.0/<major.minor.iota>.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
+# /src/5.0/ - symlink all versions + security files:
+# /src/5.0/<major.minor.iota>-RC.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
 # /src/5.0/<major.minor.iota>.tar.bz2[.md5.txt|.sha1.txt|.sha256.txt]
 # /indices/perl_version.json - all meta data (including sha1 and bz2)
 #
 # /src/stable.tar.gz
-# /src/latest.tar.gz
+# /src/latest.tar.gz (what's this actually mean?)
 
 use Carp qw/confess/;
 use Getopt::Long;
@@ -90,23 +92,28 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
     # create or symlink:
     foreach my $file ( @{ $perl->{files} } ) {
 
-        my $out   = "src/5.0/" . $file->{file};
+        my $out = "src/5.0/" . $file->{file};
 
         foreach my $security (qw(md5 sha1 sha256)) {
 
             print_file_if_different( "${out}.${security}.txt",
                 $file->{$security} );
         }
-        create_symlink( $file->{filepath}, $out );
 
-		# only link stable versions directly from src/
-		next unless $perl->{status} eq 'stable';
+        # FIXME: Work out ../ multiplier
+		my $src = ( '../' x 2 ) . $out;
+        create_symlink( $file->{filepath}, $src );
+
+        # only link stable versions directly from src/
+        next unless $perl->{status} eq 'stable';
         my $out_src = "src/" . $file->{file};
-        create_symlink( $file->{filepath}, '../' .$out );
+
+        # FIXME: Work out ../ multiplier
+		$src = ( '../' x 1 ) . $out;
+        create_symlink( $file->{filepath}, $src );
 
     }
 }
-
 
 sub print_file_if_different {
     my ( $file, $data ) = @_;
@@ -272,7 +279,7 @@ sub file_meta {
     };
 }
 
-#### THE CODE BELOW HERE IS FROM:
+#### THE CODE BELOW HERE IS COPIED FROM:
 # https://github.com/perlorg/cpanorg/blob/master/bin/cpanorg_perl_releases
 # Maybe make it into a module or something?
 sub sort_versions {
@@ -352,7 +359,7 @@ sub fetch_perl_version_data {
         my $zip_file = $module->{distvname} . '.tar.gz';
 
         $module->{zip_file} = $zip_file;
-        $module->{url} = "http://www.cpan.org/src/" . $module->{zip_file};
+        $module->{url} = "http://www.cpan.org/src/5.0/" . $module->{zip_file};
 
         ( $module->{released_date}, $module->{released_time} )
             = split( 'T', $module->{released} );
