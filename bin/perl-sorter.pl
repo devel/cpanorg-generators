@@ -2,6 +2,14 @@
 
 use strict;
 
+# Script written by Leo Lapworth
+
+# Run once to clear out old files - in /src/
+# rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*
+# rm -f *_is_* latest_* devel_* maint_* stable_*
+# rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_* 5.0/latest*
+# rm -rf 5.0/devel 5.0/maint
+
 # perl-sorter.perl
 #
 # Scans the Perl releases - update the CPAN/src symlinks and meta files.
@@ -26,22 +34,14 @@ use strict;
 # /src/latest.tar.gz (what's this actually mean?)
 
 use Carp qw/confess/;
-use Getopt::Long;
-use File::Slurp;
 use File::Basename qw/dirname basename/;
-
+use File::Slurp;
+use Getopt::Long;
 use JSON ();
 use LWP::Simple qw(get);
 
 # Where the CPAN folder is
 my $CPAN = 'CPAN';
-
-# If debug set then shell commands are just printed and not run
-my $DEBUG = 1;
-
-my $json = JSON->new->pretty(1);
-
-mkdir('data') unless -d 'data';
 
 # check directories exist
 foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
@@ -49,20 +49,21 @@ foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
         unless -d $dir;
 }
 
+# make a directory to cache data ( for fetch_perl_version_data() )
+mkdir('data') unless -d 'data';
+
+my $json = JSON->new->pretty(1);
+
 my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
 
-# Run once to clear out old files - check for others as well
-#     "rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*",
-#     "rm -f *_is_* latest_* devel_* maint_* stable_*",
-#     "rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_*",
-#     "rm -f 5.0/devel 5.0/maint",
+chdir($CPAN);
 
 # check disk for files
 foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
     my $id = $perl->{cpanid};
 
     if ( $id =~ /^(.)(.)/ ) {
-        my $path     = "$CPAN/authors/id/$1/$1$2/$id";
+        my $path     = "authors/id/$1/$1$2/$id";
         my $fileroot = "$path/" . $perl->{distvname};
         my @files    = glob("${fileroot}.*tar.*");
 
@@ -91,7 +92,8 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
 # Now just putting the secrity data as think the 5.0/ was a bug?
 # 8d8bf968439fcf4a0965c335d1ccd981
 
-my $src_root = "$CPAN/foo/src";
+# just to make it easier for testing
+my $src = "src";
 
 foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
 
@@ -99,7 +101,9 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
     # create or symlink:
     foreach my $file ( @{ $perl->{files} } ) {
 
-        my $out = "${src_root}/5.0/" . $file->{filename};
+        my $filename = $file->{file};
+
+        my $out = "${src}/5.0/" . $file->{filename};
 
         foreach my $security (qw(md5 sha1 sha256)) {
 
@@ -107,15 +111,45 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
                 $file->{$security} );
         }
 
-        create_symlink( $file->{file},
-            ( ( '../' x 2 ) . $file->{filename} ) );
+        create_symlink( ( ( '../' x 2 ) . $file->{file} ), $out );
 
         # only link stable versions directly from src/
         next unless $perl->{status} eq 'stable';
-        create_symlink( $file->{file},
-            ( ( '../' x 2 ) . $file->{filename} ) );
+        create_symlink(
+            ( ( '../' x 1 ) . $file->{file} ),
+            "${src}/" . $file->{filename}
+        );
 
     }
+}
+
+# Latest only symlinks
+# /src/latest.tar....
+# /src/stable.tar....
+{
+    my $latest_per_version
+        = extract_first_per_version_in_list($perl_versions);
+
+    my $latest = sort_versions( [ values %{$latest_per_version} ] )->[0];
+
+    foreach my $file ( @{ $latest->{files} } ) {
+
+        my $out_latest
+            = $file->{file} =~ /bz2/
+            ? "${src}/latest.tar.bz2"
+            : "${src}/latest.tar.gz";
+
+        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_latest );
+
+        my $out_stable
+            = $file->{file} =~ /bz2/
+            ? "${src}/stable.tar.bz2"
+            : "${src}/stable.tar.gz";
+
+        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_stable );
+
+    }
+
 }
 
 sub print_file_if_different {
@@ -133,112 +167,30 @@ sub print_file_if_different {
 
 }
 
-#
-#
-# my $fn = 'out_file.sh';
-# my @Perl;
-# if ( open( my $fh, ">", $fn ) ) {
-#     select $fh;
-#
-#     for my $p (@Perl) {
-#         my ( $file, $lang, $major, $minor, $iota, $type, $mtime, $md5, $sha1,
-#             $sha256, $latest, $obsoleted, $latest_of_type, $ago )
-#             = @$p;
-#         printf qq[: "%s"\n], join( ":", @$p );
-#         my %info = (
-#             mtime  => $mtime,
-#             md5    => $md5,
-#             sha1   => $sha1,
-#             sha256 => $sha256
-#         );
-#         emit_symlink( $file, \%info, "5.0" );
-#         if ( $latest ne "-" ) {
-#             if ( $obsoleted eq "-" ) {
-#                 emit_symlink( $file, \%info );
-#                 if ( $latest_of_type ne "-" ) {
-#                     my $release = "$lang.$major.$minor";
-#                     emit_symlink_typed( $file, $type, \%info );
-#                     emit_symlink_typed( $file, $type, \%info, "5.0" );
-#                     if ( $type eq "maint" || $type eq "devel" ) {
-#                         emit_symlink( $file, \%info, "5.0/$type" );
-#                         emit_symlink_typed( $file, $type, \%info,
-#                             "5.0/$type" );
-#                     }
-#                     if ( $type eq "maint" ) {
-#                         for my $l (qw(stable latest)) {
-#                             emit_symlink_typed( $file, $l, \%info );
-#                         }
-#                     }
-#                     my $t0 = "latest_${latest}_is_$release";
-#                     my $t1 = "latest_${type}_is_$release";
-#                     my $t2 = "${type}_is_$release";
-#                     emit_touch( $t0, \%info );
-#                     emit_touch( $t1, \%info );
-#                     emit_touch( $t2, \%info );
-#                     if ( $type eq "maint" || $type eq "devel" ) {
-#
-#                         for my $t ( $t0, $t1, $t2 ) {
-#                             emit_touch( "5.0/$t",       \%info );
-#                             emit_touch( "5.0/$type/$t", \%info );
-#                         }
-#                     }
-#                     my $t3 = "latest_${latest}";
-#                     my $t4 = "latest_${type}";
-#                     emit_echo( $release, $t3, \%info );
-#                     emit_echo( $release, $t4, \%info );
-#                     if ( $type eq "maint" || $type eq "devel" ) {
-#                         for my $t ( $t3, $t4 ) {
-#                             emit_echo( $release, "5.0/$t",       \%info );
-#                             emit_echo( $release, "5.0/$type/$t", \%info );
-#                         }
-#                     }
-#                 }
-#             }
-#         }
-#     }
-#     print "exit 0\n";
-#     select STDOUT;
-# } else {
-#     die qq[$0: Failed to create "$fn": $!];
-# }
-#
-# exit(0);
-
-#### NEW CLEANER CODE....
-
 =head2 create_symlink
 
     create_symlink($oldfile, $newfile);
 
-Will remove $newfile if it already exists and then create
+Will unlink $newfile if it already exists and then create
 the symlink.
 
 =cut
 
 sub create_symlink {
     my ( $oldfile, $newfile ) = @_;
-    die "Could not read: $oldfile" unless -r $oldfile;
 
-	warn "$oldfile -> $newfile";
-
-    # Clean out old links
+    # Clean out old links, just in case?
     unlink($newfile) if -r $newfile;
     symlink( $oldfile, $newfile );
-}
-
-sub run_cmd {
-    my $cmd = shift;
-    if ($DEBUG) {
-        print "Running: $cmd\n";
-    } else {
-        system($cmd) unless $DEBUG;
-    }
 }
 
 =head2 file_meta
     
     my $meta = file_meta($file);
 
+	print $meta->{file};
+	print $meta->{filename};
+	print $meta->{filedir};
     print $meta->{md5};
     print $meta->{sha256};
     print $meta->{mtime};
@@ -389,3 +341,4 @@ sub fetch_perl_version_data {
     }
     return \@perls, \@testing;
 }
+
