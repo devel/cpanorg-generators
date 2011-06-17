@@ -23,7 +23,7 @@ touch $CPATH/../tmp/pause-full.state
 
 echo "`date` Done; sleeping"
 
-sleep 7300
+sleep 4000
 
 done
 
