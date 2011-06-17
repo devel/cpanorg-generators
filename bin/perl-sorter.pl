@@ -1,418 +1,338 @@
 #!/usr/bin/perl -w
 
-#
-# perl-sorter.perl
-#
-# Scans the Perl releases, sorts them, and optionally generates
-# shell script to update the CPAN/src symlinks and label files.
-#
-
 use strict;
 
+# Script written by Leo Lapworth
+
+# Run once to clear out old files - in /src/
+# rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*
+# rm -f *_is_* latest_* devel_* maint_* stable_*
+# rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_* 5.0/latest*
+# rm -rf 5.0/devel 5.0/maint
+
+# perl-sorter.perl
+#
+# Scans the Perl releases - update the CPAN/src symlinks and meta files.
+#
+# $perl->{version} = 5.14.1-RC1
+# $perl->{major} = 5;
+# $perl->{minor} = 14;
+# $perl->{iota} = 1;
+#
+# Files to manage (either symlink or create)
+#
+# /src/ - symlink all STABLE versions:
+# /src/<major.minor.iota>.tar.gz
+# /src/<major.minor.iota>.tar.bz2
+#
+# /src/5.0/ - symlink all versions + security files:
+# /src/5.0/<major.minor.iota>-RC.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
+# /src/5.0/<major.minor.iota>.tar.bz2[.md5.txt|.sha1.txt|.sha256.txt]
+# /indices/perl_version.json - all meta data (including sha1 and bz2)
+#
+# /src/stable.tar.gz
+# /src/latest.tar.gz (what's this actually mean?)
+
 use Carp qw/confess/;
-use Getopt::Long;
-
-sub usage {
-    die <<__EOF__;
-$0: Usage:
-$0 [--update_script=script.sh] [--latest_report=latest.txt]
-__EOF__
-}
-
-my %Options;
-
-usage() unless GetOptions('update_script=s' =>
-			  \$Options{update_script},
-			  'latest_report=s' =>
-			  \$Options{latest_report});
-
 use File::Basename qw/dirname basename/;
+use File::Slurp 9999.19;
+use Getopt::Long;
+use JSON ();
+use LWP::Simple qw(get);
 
-my @Pumpkin5;
+# Where the CPAN folder is
+my $CPAN = 'CPAN';
 
-my $Pumpkin5 = "http://pause.perl.org/pause/query?ACTION=who_pumpkin;OF=YAML";
+# check directories exist
+foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
+    die "$dir does not exist, are you running from the right dir?"
+        unless -d $dir;
+}
 
-$ENV{PATH} = "/usr/local/bin:$ENV{PATH}";  # For curl.
-$ENV{PATH} = "/opt/csw/bin:$ENV{PATH}";  # For openssl.
-$ENV{PATH} = "/opt/sfw/bin:$ENV{PATH}";  # For openssl.
+# make a directory to cache data ( for fetch_perl_version_data() )
+mkdir('data') unless -d 'data';
 
-if (open(my $fh, "curl -s '$Pumpkin5'|")) {
-    while (<$fh>) {
-	if (/^- ([\w-]+)$/) {
-	    push @Pumpkin5, $1;
-	}
+my $json = JSON->new->pretty(1);
+
+my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
+
+chdir($CPAN);
+
+# check disk for files
+foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
+    my $id = $perl->{cpanid};
+
+    if ( $id =~ /^(.)(.)/ ) {
+        my $path     = "authors/id/$1/$1$2/$id";
+        my $fileroot = "$path/" . $perl->{distvname};
+        my @files    = glob("${fileroot}.*tar.*");
+
+        die "Could not find perl ${fileroot}.*" unless scalar(@files);
+
+        $perl->{files} = [];
+        foreach my $file (@files) {
+            my $meta = file_meta($file);
+            push( @{ $perl->{files} }, $meta );
+        }
     }
 }
 
-die qq[$0: No Perl5 pumpkins found\n] unless @Pumpkin5;
+# Create file / symlinks for ALL versions in /src/5.0/
+# src/5.0/perl-5.12.4-RC1.tar.bz2
+# src/5.0/perl-5.12.4-RC1.tar.bz2.md5.txt
+# src/5.0/perl-5.12.4-RC1.tar.bz2.sha1.txt
+# src/5.0/perl-5.12.4-RC1.tar.bz2.sha256.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz
+# src/5.0/perl-5.12.4-RC1.tar.gz.md5.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz.sha1.txt
+# src/5.0/perl-5.12.4-RC1.tar.gz.sha256.txt
 
-my @Perl;
+# Old format for md5 sha1 sha256 was:
+# 8d8bf968439fcf4a0965c335d1ccd981  5.0/perl-5.14.1-RC1.tar.gz
+# Now just putting the secrity data as think the 5.0/ was a bug?
+# 8d8bf968439fcf4a0965c335d1ccd981
 
-for my $id (@Pumpkin5) {
-    if ($id =~ /^(.)(.)/) {
-	my $path = "CPAN/authors/id/$1/$1$2/$id";
-	my @glob;
-	push @glob, glob("$path/perl-5.*.tar.*");
-	push @glob, glob("$path/perl5.*.tar.*");
-	push @Perl, @glob;
+# just to make it easier for testing
+my $src = "src";
+
+foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
+
+    # For a perl e.g. perl-5.12.4-RC1
+    # create or symlink:
+    foreach my $file ( @{ $perl->{files} } ) {
+
+        my $filename = $file->{file};
+
+        my $out = "${src}/5.0/" . $file->{filename};
+
+        foreach my $security (qw(md5 sha1 sha256)) {
+
+            print_file_if_different( "${out}.${security}.txt",
+                $file->{$security} );
+        }
+
+        create_symlink( ( ( '../' x 2 ) . $file->{file} ), $out );
+
+        # only link stable versions directly from src/
+        next unless $perl->{status} eq 'stable';
+        create_symlink(
+            ( ( '../' x 1 ) . $file->{file} ),
+            "${src}/" . $file->{filename}
+        );
+
     }
 }
 
-@Perl = grep { ! /-bindist\d/ } @Perl;
+# Latest only symlinks
+# /src/latest.tar....
+# /src/stable.tar....
+{
+    my $latest_per_version
+        = extract_first_per_version_in_list($perl_versions);
 
-sub perl_version_extractor {
-    my $perl = shift;
-    if ($perl =~ /perl-5\.(\d+)\.(\d+)(?:-(?:RC|TRIAL)(\d+))?\.tar\.(?:gz|bz2)$/) {
-	return (5, $1, $2, defined $3 ? $3 + 1 : 0);
-    } elsif ($perl =~ /perl5\.0*(\d+)(?:_0*(\d+))?(?:-(?:RC|TRIAL)(\d+))?\.tar\.(?:gz|bz2)$/) {
-	return (5, $1, $2 || 0, defined $3 ? $3 + 1 : 0);
+    my $latest = sort_versions( [ values %{$latest_per_version} ] )->[0];
+
+    foreach my $file ( @{ $latest->{files} } ) {
+
+        my $out_latest
+            = $file->{file} =~ /bz2/
+            ? "${src}/latest.tar.bz2"
+            : "${src}/latest.tar.gz";
+
+        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_latest );
+
+        my $out_stable
+            = $file->{file} =~ /bz2/
+            ? "${src}/stable.tar.bz2"
+            : "${src}/stable.tar.gz";
+
+        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_stable );
+
     }
+
 }
 
-sub perl_version_classifier {
-    my $perl = shift;
-    my ($lang, $major, $minor, $iota) = perl_version_extractor($perl);
-    my $type =
-#	$minor == 0 && $major % 2 == 0 || $iota > 0 ? 'testing' :
-	$iota > 0 ? 'testing' :
-	    $major < 6 ? 'maint' : $major % 2 == 0 ? 'maint' : 'devel';
-    return ($lang, $major, $minor, $iota, $type);
+sub print_file_if_different {
+    my ( $file, $data ) = @_;
+
+    if ( -r $file ) {
+        my $content = read_file($file);
+        return if $content eq $data;
+    }
+
+	write_file( "$file", { binmode => ':utf8' }, $data )
+        or die "Could not open $file: $!";
 }
 
-sub perl_file_info {
-    my $file = $_;
-    my $mtime = (stat($file))[9];
-    my $f = basename($file);
-    my $d = dirname($file);
-    my $c = "$d/CHECKSUMS";
+=head2 create_symlink
+
+    create_symlink($oldfile, $newfile);
+
+Will unlink $newfile if it already exists and then create
+the symlink.
+
+=cut
+
+sub create_symlink {
+    my ( $oldfile, $newfile ) = @_;
+
+    # Clean out old link (don't care if there isn't one already)
+    unlink($newfile);
+    symlink( $oldfile, $newfile );
+}
+
+=head2 file_meta
+    
+    my $meta = file_meta($file);
+
+	print $meta->{file};
+	print $meta->{filename};
+	print $meta->{filedir};
+    print $meta->{md5};
+    print $meta->{sha256};
+    print $meta->{mtime};
+    print $meta->{sha1};
+
+Get or calculate meta information about a file
+
+=cut
+
+sub file_meta {
+    my $file     = shift;
+    my $filename = basename($file);
+    my $dir      = dirname($file);
+    my $checksum = "$dir/CHECKSUMS";
+
+    # The CHECKSUM file has already calculated
+    # lots of this so use that
     my $cksum;
-    unless (defined($cksum = do $c)) {
-	die qq[Checksums file "$c" not found\n];
+    unless ( defined( $cksum = do $checksum ) ) {
+        die qq[Checksums file "$checksum" not found\n];
     }
-    my $md5 = $cksum->{$f}->{md5};
-    my $sha256 = $cksum->{$f}->{sha256};
+
+    # Calculate the sha1
     my $sha1;
-    if (open(my $fh, "openssl sha1 $file |")) {
-	while (<$fh>) {
-	    if (/^SHA1\(.+?\)= ([0-9a-f]+)$/) {
-		$sha1 = $1;
-		last;
-	    }
-	}
+    if ( open( my $fh, "openssl sha1 $file |" ) ) {
+        while (<$fh>) {
+            if (/^SHA1\(.+?\)= ([0-9a-f]+)$/) {
+                $sha1 = $1;
+                last;
+            }
+        }
     }
-    unless (defined $sha1) {
-	die qq[Failed to compute sha1 for $file\n];
+    die qq[Failed to compute sha1 for $file\n] unless defined $sha1;
+
+    return {
+        file     => $file,
+        filedir  => $dir,
+        filename => $filename,
+        mtime    => ( stat($file) )[9],
+        md5      => $cksum->{$filename}->{md5},
+        sha256   => $cksum->{$filename}->{sha256},
+        sha1     => $sha1,
+    };
+}
+
+#### THE CODE BELOW HERE IS COPIED FROM:
+# https://github.com/perlorg/cpanorg/blob/master/bin/cpanorg_perl_releases
+# Maybe make it into a module or something?
+sub print_file {
+    my ( $file, $data ) = @_;
+
+	write_file( "data/$file", { binmode => ':utf8' }, $data )
+        or die "Could not open data/$file: $!";
+}
+
+sub sort_versions {
+    my $list = shift;
+
+    my @sorted = sort {
+               $b->{version_major} <=> $a->{version_major}
+            || int( $b->{version_minor} ) <=> int( $a->{version_minor} )
+            || $b->{version_iota} <=> $a->{version_iota}
+    } @{$list};
+
+    return \@sorted;
+
+}
+
+sub extract_first_per_version_in_list {
+    my $versions = shift;
+
+    my $lookup = {};
+    foreach my $version ( @{$versions} ) {
+        my $minor_version = $version->{version_major} . '.'
+            . int( $version->{version_minor} );
+
+        $lookup->{$minor_version} = $version
+            unless $lookup->{$minor_version};
     }
-    return ($mtime, $md5, $sha1, $sha256);
+    return $lookup;
 }
 
-#
-# Classify the versions, add file information.
-#
+sub fetch_perl_version_data {
+    my $perl_dist_url = "http://search.cpan.org/api/dist/perl";
 
-@Perl = map { my $f = $_;
-	      [ 
-	       $f,
-	       perl_version_classifier($f),
-	       perl_file_info($f),
-	      ] } @Perl;
+    my $filename = 'perl_version_all.json';
 
-#
-# Sort by the versions.
-#
+    # See what we have on disk
+    my $disk_json = '';
+    $disk_json = read_file("data/$filename")
+        if -r "data/$filename";
 
-@Perl = sort { $a->[1] <=> $b->[1] ||
-	       $a->[2] <=> $b->[2] ||
-	       $a->[3] <=> $b->[3] ||
-	       $a->[4] <=> $b->[4]} @Perl; 
+    my $cpan_json = get($perl_dist_url);
+    die "Unable to fetch $perl_dist_url" unless $cpan_json;
 
-my %Perl;
-my %ByType;
+    if ( $cpan_json eq $disk_json ) {
 
-for my $p (@Perl) {
-    my ($file, $lang, $major, $minor, $iota, $type) = @$p;
-    $Perl{$lang}{$major}{$minor}{$file}++;
-}
-
-#
-# Compute "latest".
-#
-
-my %Latest;
-
-for my $lang (sort { $a <=> $b } keys %Perl) {
-    my @major = sort { $a <=> $b } keys %{ $Perl{$lang} };
-    for my $major (@major) {
-	my @minor = sort { $a <=> $b } keys %{ $Perl{$lang}{$major} };
-	my $minor = $minor[-1];
-	for my $file (keys %{ $Perl{$lang}{$major}{$minor} }) { 
-	    $Latest{$lang}{$major}{$minor}{$file}++;
-	}
-    }
-}
-
-#
-# Add "latest" and "obsoleted by" columns.
-# 
-
-for my $p (@Perl) {
-    my ($file, $lang, $major, $minor, $iota, $type) = @$p;
-    # "latest in line"
-    push @$p,
-         $Latest{$lang}{$major}{$minor}{$file} ?
-           "$lang.$major" : "-";
-    push @{ $ByType{ $type } }, "$lang.$major.$minor";
-    # "obsoleted by"
-    my $next = $major + 1;
-    push @$p,
-         $type eq 'devel' && exists $Latest{$lang}{$next} ?
-           "$lang.$next" : $type eq 'testing' ? "$lang.$major.$minor" :"-";
-}
-
-#
-# Add "latest of type" column.
-#
-
-for my $p (@Perl) {
-    my ($file, $lang, $major, $minor, $iota, $type) = @$p;
-    push @$p, $ByType{$type}[-1] eq "$lang.$major.$minor" ? $type : "-";
-}
-
-#
-# Add human-friendly age column: "1 year, 7 months".
-#
-
-my $Now = time();
-
-sub ago {
-    my $ago = shift;
-    my $days = int($ago / 86400);
-    my @ago;
-    if ($days < 1) {
-	@ago = 'today';
+        # Data has not changed so don't need to do anything
+        exit;
     } else {
-	my $tmp = $days;
-	my $kyear = 365.2425;
-	my $years = int($tmp / $kyear);
-	if ($years) {
-	    push @ago,
-	      sprintf "%d year%s", $years, $years == 1 ? '' : 's';
-	    $tmp -= int($years * $kyear);
-	} 
-	my $kmonth = 30.436875;
-	my $months = int($tmp / $kmonth);
-	if ($months) {
-	    push @ago,
-	      sprintf "%d month%s", $months, $months == 1 ? '' : 's';
-	    $tmp -= $months * $kmonth;
-	}
-	my $days = int($tmp);
-	if ($days) {
-	    push @ago, sprintf "%d day%s", $days, $days == 1 ? '' : 's';
-	    $tmp -= $days;
-	}
-	my $hours = int($tmp * 24);
-	if ($hours) {
-	    push @ago, 
-	    sprintf "%d hour%s", $hours, $hours == 1 ? '' : 's';
-	}
+
+        # Save for next fetch
+        print_file( $filename, $cpan_json );
     }
 
-    splice @ago, 2 if @ago > 2;  # At most two items is enough.
-    return @ago;  
-}
+    my $data = $json->decode($cpan_json);
 
-for my $p (@Perl) {
-    my ($file, $lang, $major, $minor, $iota, $type, $mtime) = @$p;
-    push @$p, join(", ", ago($Now - $mtime));
-}
+    my @perls;
+    my @testing;
+    foreach my $module ( @{ $data->{releases} } ) {
+        next unless $module->{authorized} eq 'true';
 
-for my $p (@Perl) {
-    print join(":", @$p), "\n";
-}
+        my $version = $module->{version};
 
-sub emit_unlink {
-    my ($file) = @_;
-    print "rm -f $file\n";
-}
+        $version =~ s/-(?:RC|TRIAL)\d+$//;
+        $module->{version_number} = $version;
 
-my %echoed;
+        my ( $major, $minor, $iota ) = split( '[\._]', $version );
+        $module->{version_major} = $major;
+        $module->{version_minor} = int($minor);
+        $module->{version_iota}  = int( $iota || '0' );
 
-sub emit_echo {
-    my ($echo, $file, $info) = @_;
-    unless ($echoed{$file}++) {
-	print qq[echo '$echo' > $file\n];
-	emit_utime($info, $file);
+        $module->{type}
+            = $module->{status} eq 'testing'
+            ? 'Devel'
+            : 'Maint';
+
+        # TODO: Ask - please add some validation logic here
+        # so that on live it checks this exists
+        my $zip_file = $module->{distvname} . '.tar.gz';
+
+        $module->{zip_file} = $zip_file;
+        $module->{url} = "http://www.cpan.org/src/5.0/" . $module->{zip_file};
+
+        ( $module->{released_date}, $module->{released_time} )
+            = split( 'T', $module->{released} );
+
+        next if $major < 5;
+
+        if ( $module->{status} eq 'stable' ) {
+            push @perls, $module;
+        } else {
+            push @testing, $module;
+        }
     }
+    return \@perls, \@testing;
 }
 
-my %utimed;
-
-sub emit_utime {
-    my ($info, @file) = @_;
-    @file = grep { !$utimed{$_}++ } @file;
-    if (@file) {
-	my $mtime = $info->{mtime};
-	confess(qq[bad mtime]) unless defined $mtime;
-	print qq[perl -e 'utime $mtime, $mtime, \@ARGV' @file\n];
-    }
-}
-
-sub emit_cksum {
-    my ($basename, $info) = @_;
-    for my $c (qw(md5 sha1 sha256)) {
-	emit_echo("$info->{$c}  $basename", "$basename.$c.txt", $info);
-	emit_utime($info, $basename);
-    }
-}
-
-sub emit_symlink {
-    my ($file, $info, $more) = @_;
-    my $without_top = $file;
-    $without_top =~ s|^(.+?/)||;
-    my $basename = basename($file);
-    my $dotdotpath = "..";
-    if (defined $more) {
-	$dotdotpath = "../" x (1 + $more =~ tr:/:/:) . $dotdotpath;
-    }
-    my $path = defined $more ? "$more/$basename" : $basename;
-    emit_unlink($path);
-    print "ln -s $dotdotpath/$without_top $path\n";
-    emit_cksum($path, $info);
-}
-
-sub emit_symlink_typed {
-    my ($file, $label, $info, $more) = @_;
-    my $without_top = $file;
-    $without_top =~ s|^(.+?/)||;
-    my $dotdotpath = "..";
-    if (defined $more) {
-	$dotdotpath = "../" x (1 + $more =~ tr:/:/:) . $dotdotpath;
-    }
-    my ($suffix) = ($file =~ m|(\.tar\..+)$|);
-    my $l = "$label$suffix";
-    $l = "$more/$l" if defined $more;
-    emit_unlink($l);
-    print "ln -s $dotdotpath/$without_top $l\n";
-    emit_cksum($l, $info);
-}
-
-my %touched;
-
-sub emit_touch {
-    my ($file, $info) = @_;
-    unless ($touched{$file}++) {
-	print "touch $file\n";
-	emit_utime($info, $file);
-    }
-}
-
-if (defined $Options{update_script}) {
-    my $fn = $Options{update_script};
-    if (open(my $fh, ">", $fn)) {
-	select $fh;
-	print "test -d ../src         || exit 1\n";
-	print "test -d ../clpa        || exit 1\n";
-	print "test -d ../../CPAN/src || exit 1\n";
-	for my $c (qw(md5 sha1 sha256)) {
-	    print "rm -f *.$c.txt 5.0/*.$c.txt 5.0/*/*.$c.txt\n";
-	}
-	print "rm -f *.tar.* 5.0/*.tar.* 5.0/*/*.tar.*\n";
-	print "rm -f *_is_* latest_* devel_* maint_* stable_*\n";
-	print "rm -f 5.0/*_is_* 5.0/devel_* 5.0/maint_*\n";
-	print "rm -f 5.0/devel/*_is_* 5.0/maint/*_is_*\n";
-	for my $p (@Perl) {
-	    my ($file, $lang, $major, $minor, $iota, $type,
-		$mtime, $md5, $sha1, $sha256,
-		$latest, $obsoleted, $latest_of_type, $ago) = @$p;
-	    printf qq[: "%s"\n], join(":", @$p);
-	    my %info = (mtime  => $mtime,
-			md5    => $md5,
-			sha1   => $sha1,
-			sha256 => $sha256);
-	    emit_symlink($file, \%info, "5.0");
-	    if ($latest ne "-") {
-		if ($obsoleted eq "-") {
-		    emit_symlink($file, \%info);
-		    if ($latest_of_type ne "-") {
-			my $release = "$lang.$major.$minor";
-			emit_symlink_typed($file, $type, \%info);
-			emit_symlink_typed($file, $type, \%info, "5.0");
-			if ($type eq "maint" || $type eq "devel") {
-			    emit_symlink($file, \%info, "5.0/$type");
-			    emit_symlink_typed($file, $type, \%info,
-					       "5.0/$type");
-			}
-			if ($type eq "maint") {
-			    for my $l (qw(stable latest)) {
-				emit_symlink_typed($file, $l, \%info);
-			    }
-			}
-			my $t0 = "latest_${latest}_is_$release";
-			my $t1 = "latest_${type}_is_$release";
-			my $t2 = "${type}_is_$release";
-			emit_touch($t0, \%info);
-			emit_touch($t1, \%info);
-			emit_touch($t2, \%info);
-			if ($type eq "maint" || $type eq "devel") {
-			    for my $t ($t0, $t1, $t2) {
-				emit_touch("5.0/$t", \%info);
-				emit_touch("5.0/$type/$t", \%info);
-			    }
-			}
-			my $t3 = "latest_${latest}";
-			my $t4 = "latest_${type}";
-			emit_echo($release, $t3, \%info);
-			emit_echo($release, $t4, \%info);
-			if ($type eq "maint" || $type eq "devel") {
-			    for my $t ($t3, $t4) {
-				emit_echo($release, "5.0/$t", \%info);
-				emit_echo($release, "5.0/$type/$t", \%info);
-			    }
-			}
-		    }
-		}
-	    }
-	}
-	print "exit 0\n";
-	select STDOUT;
-    } else {
-	die qq[$0: Failed to create "$fn": $!];
-    }
-}
-
-my %LatestOfBranch;
-my @LatestOfBranch;
-
-if (defined $Options{latest_report}) {
-    my $fn = $Options{latest_report};
-    if (open(my $fh, ">", $fn)) {
-	for my $p (reverse @Perl) {
-	    my ($file, $lang, $major, $minor, $iota, $type,
-		$mtime, $md5, $sha1, $sha256,
-		$latest, $obsoleted, $latest_of_type, $ago) = @$p;
-	    if ($latest ne "-" && $obsoleted eq "-") {
-		my $branch = "$lang.$major";
-		unless (exists $LatestOfBranch{$branch}) {
-		    push @LatestOfBranch, $branch;
-		}
-		push @{ $LatestOfBranch{$branch}{file} }, $file;
-		$LatestOfBranch{$branch}{info} =
-		    [ "$branch.$minor", $type, $ago ];
-	    }
-	}
-	for my $branch (@LatestOfBranch) {
-	    my $file = join(",",
-			    @{ $LatestOfBranch{$branch}{file} });
-	    my ($release, $type, $ago) =
-		@{ $LatestOfBranch{$branch}{info} };
-	    print $fh join(":", $branch, $release,
-			   $file, $type, $ago), "\n";
-	}
-	close($fh);
-    } else {
-	die qq[$0: Failed to create "$fn": $!];
-    }
-}
-
-exit(0);
