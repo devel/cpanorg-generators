@@ -1,4 +1,4 @@
-#!/bin/sh -x
+#!/bin/sh
 
 cd ~/cpan || exit 1
 
