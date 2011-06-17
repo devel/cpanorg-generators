@@ -35,7 +35,7 @@ use strict;
 
 use Carp qw/confess/;
 use File::Basename qw/dirname basename/;
-use File::Slurp;
+use File::Slurp 9999.19;
 use Getopt::Long;
 use JSON ();
 use LWP::Simple qw(get);
@@ -160,11 +160,8 @@ sub print_file_if_different {
         return if $content eq $data;
     }
 
-    open my $fh, ">:utf8", "$file"
+	write_file( "$file", { binmode => ':utf8' }, $data )
         or die "Could not open $file: $!";
-    print $fh $data;
-    close $fh;
-
 }
 
 =head2 create_symlink
@@ -179,8 +176,8 @@ the symlink.
 sub create_symlink {
     my ( $oldfile, $newfile ) = @_;
 
-    # Clean out old links, just in case?
-    unlink($newfile) if -r $newfile;
+    # Clean out old link (don't care if there isn't one already)
+    unlink($newfile);
     symlink( $oldfile, $newfile );
 }
 
@@ -242,11 +239,8 @@ sub file_meta {
 sub print_file {
     my ( $file, $data ) = @_;
 
-    open my $fh, ">:utf8", "data/$file"
+	write_file( "data/$file", { binmode => ':utf8' }, $data )
         or die "Could not open data/$file: $!";
-    print $fh $data;
-    close $fh;
-
 }
 
 sub sort_versions {
