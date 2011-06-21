@@ -160,7 +160,7 @@ sub print_file_if_different {
         return if $content eq $data;
     }
 
-	write_file( "$file", { binmode => ':utf8' }, $data )
+    write_file( "$file", { binmode => ':utf8' }, $data )
         or die "Could not open $file: $!";
 }
 
@@ -176,9 +176,11 @@ the symlink.
 sub create_symlink {
     my ( $oldfile, $newfile ) = @_;
 
-    # Clean out old link (don't care if there isn't one already)
-    unlink($newfile);
-    symlink( $oldfile, $newfile );
+    # Clean out old symlink if it does not point to correct location
+    if ( -l $newfile && readlink($newfile) ne $oldfile ) {
+        unlink($newfile);
+    }
+    symlink( $oldfile, $newfile ) unless -l $newfile;
 }
 
 =head2 file_meta
@@ -239,7 +241,7 @@ sub file_meta {
 sub print_file {
     my ( $file, $data ) = @_;
 
-	write_file( "data/$file", { binmode => ':utf8' }, $data )
+    write_file( "data/$file", { binmode => ':utf8' }, $data )
         or die "Could not open data/$file: $!";
 }
 
