@@ -176,9 +176,11 @@ the symlink.
 sub create_symlink {
     my ( $oldfile, $newfile ) = @_;
 
-    # Clean out old link (don't care if there isn't one already)
-    unlink($newfile);
-    symlink( $oldfile, $newfile );
+    # Clean out old symlink if it does not point to correct location
+    if(-l $newfile && readlink($newfile) ne $oldfile) {
+        unlink($newfile);        
+    }    
+    symlink( $oldfile, $newfile ) unless -l $newfile;
 }
 
 =head2 file_meta
