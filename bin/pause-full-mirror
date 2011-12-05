@@ -2,7 +2,7 @@
 
 CPATH=/cpan/CPAN
 
-RS="rsync -avH"
+RS="rsync -avH --temp-dir=/cpan/tmp"
 
 while `true`;
   do
@@ -26,5 +26,3 @@ echo "`date` Done; sleeping"
 sleep 4000
 
 done
-
-
