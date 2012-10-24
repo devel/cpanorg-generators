@@ -2,7 +2,7 @@
 
 CPATH=/cpan/CPAN
 
-RS="rsync -avH --temp-dir=/cpan/tmp"
+RS="rsync -avH --temp-dir=/cpan/tmp --timeout=1200"
 
 while `true`;
   do
