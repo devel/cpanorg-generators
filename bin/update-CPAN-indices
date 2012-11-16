@@ -17,7 +17,7 @@ makeindex () {
   gz=$idx.gz 
   tmpgz=$TMPDIR/$gz.$$
   idxgz=$CPAN/indices/$gz
-  eval "$1" | gzip -9 > $tmpgz
+  eval "$1" | gzip --rsyncable -9 > $tmpgz
   if test -s $tmpgz
   then
     mv -f $tmpgz $idxgz
