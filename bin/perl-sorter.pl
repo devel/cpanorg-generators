@@ -24,6 +24,7 @@ use strict;
 # /src/ - symlink all STABLE versions:
 # /src/<major.minor.iota>.tar.gz
 # /src/<major.minor.iota>.tar.bz2
+# /src/<major.minor.iota>.tar.xz
 #
 # /src/5.0/ - symlink all versions + security files:
 # /src/5.0/<major.minor.iota>-RC.tar.gz[.md5.txt|.sha1.txt|.sha256.txt]
@@ -134,20 +135,12 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
 
     foreach my $file ( @{ $latest->{files} } ) {
 
-        my $out_latest
-            = $file->{file} =~ /bz2/
-            ? "${src}/latest.tar.bz2"
-            : "${src}/latest.tar.gz";
-
-        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_latest );
-
-        my $out_stable
-            = $file->{file} =~ /bz2/
-            ? "${src}/stable.tar.bz2"
-            : "${src}/stable.tar.gz";
-
-        create_symlink( ( ( '../' x 1 ) . $file->{file} ), $out_stable );
-
+        for my $type (qw(latest stable)) {
+            my ($ext) = ($file->{file} =~ m/(bz2|gz|xz)$/) or next;
+            my $out = "${src}/${type}.tar.${ext}";
+            warn "creating symlink for ", $file->{file}, " to $out";
+            create_symlink('../' . $file->{file}, $out);
+        }
     }
 
 }
