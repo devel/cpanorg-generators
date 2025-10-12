@@ -1,8 +1,7 @@
 #!/bin/sh
 
-PATH=$HOME/cpan/bin:$PATH; export PATH
-
-cd $HOME/cpan/CPAN || exit 1
+export CPAN=${CPAN:-$HOME/cpan/CPAN}
+cd $CPAN || exit 1
 
 makeRECENT () {
   idx=$2

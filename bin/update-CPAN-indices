@@ -1,16 +1,10 @@
 #!/bin/sh
 
-HOME=~
-export HOME
-PATH=$HOME/cpan/bin:$PATH
-export PATH
-TMPDIR=$HOME/tmp
-export TMPDIR
-
-CPAN=$HOME/cpan/CPAN
-export CPAN
-
+export CPAN=${CPAN:-$HOME/cpan/CPAN}
 cd $CPAN || exit 1
+
+export TMPDIR=${TMPDIR:-$HOME/tmp}
+logdir=${LOGDIR:-$HOME/cpan/log}
 
 makeindex () {
   idx=$2 
@@ -33,7 +27,6 @@ rm -f *~ MF* core
 makeindex "/bin/ls -laR"		"ls-lR"
 makeindex "pfgmls $CPAN/ $CPAN/"	"find-ls"
 
-logdir=$HOME/cpan/log
 zcat indices/find-ls.gz | grep -v ' indices/' | sort -k 8 > $logdir/.find-ls
 mv -f $logdir/.find-ls $logdir/find-ls
 date | (cd $logdir && ci -q -l find-ls 2>&1 >/dev/null)
