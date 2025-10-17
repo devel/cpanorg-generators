@@ -1,11 +1,12 @@
 #!/bin/sh
 
 export CPAN=${CPAN:-$HOME/cpan/CPAN}
+export TMPDIR=${TMPDIR:-$HOME/tmp}
 cd $CPAN || exit 1
 
 makeRECENT () {
   idx=$2
-  tmp=~/tmp/$idx.$$
+  tmp=$TMPDIR/$idx.$$
   idxidx=indices/$idx
   find . -mtime -7 '(' -type f -o -type l ')' $1 | egrep -v '.mirror.log|.FTP_LS_DATA' | sed 's%^\./%%'> $tmp && mv -f $tmp $idxidx || rm -f $tmp
   sort -o $idxidx $idxidx
