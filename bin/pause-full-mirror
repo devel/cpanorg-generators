@@ -1,26 +1,27 @@
 #!/bin/bash
 
 CPAN=${CPAN:-$HOME/cpan/CPAN}
-TMPDIR=${TMPDIR:-/tmp}
+TMPDIR=${TMPDIR:-$HOME/tmp}
+WORKDIR=${WORKDIR:-$HOME/cpan}
 
-RS="rsync -avH --temp-dir=$TMPDIR --timeout=1200"
+RS="rsync -avH --temp-dir=\"$TMPDIR\" --timeout=1200"
 
 while `true`;
   do
 
 echo "Mirroring modules"
 date
-$RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ $CPAN/modules/
+$RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ "$CPAN/modules/"
 
 echo "Mirroring authors"
 date
-$RS --delete-after abh@pause.perl.org::PAUSE/authors/ $CPAN/authors/
+$RS --delete-after abh@pause.perl.org::PAUSE/authors/ "$CPAN/authors/"
 
 echo "Mirroring scripts"
 date
-$RS abh@pause.perl.org::scripts/ $CPAN/scripts/
+$RS abh@pause.perl.org::scripts/ "$CPAN/scripts/"
 
-touch $TMPDIR/pause-full.state
+touch "$WORKDIR/tmp/pause-full.state"
 
 echo "`date` Done; sleeping"
 

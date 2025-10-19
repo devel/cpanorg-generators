@@ -35,6 +35,7 @@ use strict;
 # /src/latest.tar.gz (what's this actually mean?)
 
 use Carp qw/confess/;
+use Cwd qw/abs_path/;
 use File::Basename qw/dirname basename/;
 use File::Slurp 9999.19;
 use Getopt::Long;
@@ -44,8 +45,8 @@ use LWP::Simple qw(get);
 # Where the CPAN folder is
 my $CPAN = $ENV{CPAN} || 'CPAN';
 
-# Working directory for data cache
-my $WORKDIR = $ENV{WORKDIR} || '.';
+# Working directory for data cache (resolve to absolute path before chdir)
+my $WORKDIR = $ENV{WORKDIR} ? abs_path($ENV{WORKDIR}) : abs_path('.');
 
 # check directories exist
 foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
@@ -55,7 +56,7 @@ foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
 
 # make a directory to cache data ( for fetch_perl_version_data() )
 my $data_dir = "$WORKDIR/data";
-mkdir($data_dir) unless -d $data_dir;
+mkdir($data_dir) or die "Could not create directory $data_dir: $!" unless -d $data_dir;
 
 my $json = JSON->new->pretty(1);
 

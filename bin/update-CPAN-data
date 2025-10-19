@@ -6,7 +6,7 @@ use File::Slurp qw(read_file write_file);
 use Digest::SHA;
 use LWP::Simple qw(get);
 
-my $tmpdir = $ENV{TMPDIR} || '/tmp';
+my $tmpdir = $ENV{TMPDIR} || "$ENV{HOME}/tmp";
 my $json = JSON->new->pretty;
 
 my %data;
