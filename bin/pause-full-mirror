@@ -1,25 +1,26 @@
 #!/bin/bash
 
-CPATH=/cpan/CPAN
+CPAN=${CPAN:-$HOME/cpan/CPAN}
+TMPDIR=${TMPDIR:-/tmp}
 
-RS="rsync -avH --temp-dir=/cpan/tmp --timeout=1200"
+RS="rsync -avH --temp-dir=$TMPDIR --timeout=1200"
 
 while `true`;
   do
 
 echo "Mirroring modules"
 date
-$RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ $CPATH/modules/
+$RS --delete-after --exclude /index.html abh@pause.perl.org::PAUSE/modules/ $CPAN/modules/
 
 echo "Mirroring authors"
 date
-$RS --delete-after abh@pause.perl.org::PAUSE/authors/ $CPATH/authors/
+$RS --delete-after abh@pause.perl.org::PAUSE/authors/ $CPAN/authors/
 
 echo "Mirroring scripts"
 date
-$RS abh@pause.perl.org::scripts/ $CPATH/scripts/
+$RS abh@pause.perl.org::scripts/ $CPAN/scripts/
 
-touch $CPATH/../tmp/pause-full.state
+touch $TMPDIR/pause-full.state
 
 echo "`date` Done; sleeping"
 

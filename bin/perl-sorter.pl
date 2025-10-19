@@ -42,7 +42,10 @@ use JSON ();
 use LWP::Simple qw(get);
 
 # Where the CPAN folder is
-my $CPAN = 'CPAN';
+my $CPAN = $ENV{CPAN} || 'CPAN';
+
+# Working directory for data cache
+my $WORKDIR = $ENV{WORKDIR} || '.';
 
 # check directories exist
 foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
@@ -51,7 +54,8 @@ foreach my $dir ( "$CPAN/src", "$CPAN/authors" ) {
 }
 
 # make a directory to cache data ( for fetch_perl_version_data() )
-mkdir('data') unless -d 'data';
+my $data_dir = "$WORKDIR/data";
+mkdir($data_dir) unless -d $data_dir;
 
 my $json = JSON->new->pretty(1);
 
@@ -68,7 +72,7 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
         my $fileroot = "$path/" . $perl->{distvname};
         my @files    = glob("${fileroot}.*tar.*");
 
-        die "Could not find perl ${fileroot}.*" unless scalar(@files);
+        die "Could not find perl ${fileroot}.*" unless scalar(@files) or $fileroot =~ m/RC/;
 
         $perl->{files} = [];
         foreach my $file (@files) {
@@ -234,8 +238,8 @@ sub file_meta {
 sub print_file {
     my ( $file, $data ) = @_;
 
-    write_file( "data/$file", { binmode => ':utf8' }, $data )
-        or die "Could not open data/$file: $!";
+    write_file( "$data_dir/$file", { binmode => ':utf8' }, $data )
+        or die "Could not open $data_dir/$file: $!";
 }
 
 sub sort_versions {
@@ -266,14 +270,14 @@ sub extract_first_per_version_in_list {
 }
 
 sub fetch_perl_version_data {
-    my $perl_dist_url = "http://search.cpan.org/api/dist/perl";
+    my $perl_dist_url = "http://search.mcpan.org/api/dist/perl";
 
     my $filename = 'perl_version_all.json';
 
     # See what we have on disk
     my $disk_json = '';
-    $disk_json = read_file("data/$filename")
-        if -r "data/$filename";
+    $disk_json = read_file("$data_dir/$filename")
+        if -r "$data_dir/$filename";
 
     my $cpan_json = get($perl_dist_url);
     die "Unable to fetch $perl_dist_url" unless $cpan_json;

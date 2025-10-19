@@ -6,6 +6,7 @@ use File::Slurp qw(read_file write_file);
 use Digest::SHA;
 use LWP::Simple qw(get);
 
+my $tmpdir = $ENV{TMPDIR} || '/tmp';
 my $json = JSON->new->pretty;
 
 my %data;
@@ -39,16 +40,16 @@ $data{modules}->{count} = $tucs->{modules};
 $data{distributions}->{uploads}->{count} = $tucs->{uploads};
 $data{distributions}->{count} = $tucs->{distributions};
 
-write_file( "tmp/cpan-stats.json", $json->encode(\%data) );
+write_file( "$tmpdir/cpan-stats.json", $json->encode(\%data) );
 
 my $sha_old = Digest::SHA->new;
 my $sha_new = Digest::SHA->new;
 
 $sha_old->addfile("CPAN/indices/cpan-stats.json");
-$sha_new->addfile("tmp/cpan-stats.json");
+$sha_new->addfile("$tmpdir/cpan-stats.json");
 
 exit 0 if $sha_old->hexdigest eq $sha_new->hexdigest;
 
-rename "tmp/cpan-stats.json", "CPAN/indices/cpan-stats.json"
+rename "$tmpdir/cpan-stats.json", "CPAN/indices/cpan-stats.json"
   or die "Could not rename tmp file: $!";
 
