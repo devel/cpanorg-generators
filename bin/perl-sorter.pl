@@ -60,7 +60,7 @@ mkdir($data_dir) or die "Could not create directory $data_dir: $!" unless -d $da
 
 my $json = JSON->new->pretty(1);
 
-my ( $perl_versions, $perl_testing ) = fetch_perl_version_data();
+my ( $perl_versions, $perl_testing, $cpan_json, $cache_filename ) = fetch_perl_version_data();
 
 chdir($CPAN);
 
@@ -149,6 +149,9 @@ foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
     }
 
 }
+
+# All symlinks created successfully - now safe to update cache
+print_file( $cache_filename, $cpan_json );
 
 sub print_file_if_different {
     my ( $file, $data ) = @_;
@@ -283,16 +286,7 @@ sub fetch_perl_version_data {
     my $cpan_json = get($perl_dist_url);
     die "Unable to fetch $perl_dist_url" unless $cpan_json;
 
-    if ( $cpan_json eq $disk_json ) {
-
-        # Data has not changed so don't need to do anything
-        exit;
-    } else {
-
-        # Save for next fetch
-        print_file( $filename, $cpan_json );
-    }
-
+    # Don't exit early or save yet - only save after successful processing
     my $data = $json->decode($cpan_json);
 
     my @perls;
@@ -333,6 +327,6 @@ sub fetch_perl_version_data {
             push @testing, $module;
         }
     }
-    return \@perls, \@testing;
+    return ( \@perls, \@testing, $cpan_json, $filename );
 }
 
