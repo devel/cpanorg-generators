@@ -319,9 +319,10 @@ sub fetch_perl_version_data {
     my @testing;
     my $skipped_unauthorized = 0;
     foreach my $module ( @{ $data->{releases} } ) {
-        unless ($module->{authorized} eq 'true') {
+        # authorized is a JSON boolean, not a string - check truthiness, not string equality
+        unless ($module->{authorized}) {
             $skipped_unauthorized++;
-            warn "[DEBUG] Skipping $module->{distvname}: authorized = '$module->{authorized}' (not eq 'true')\n" if $verbose;
+            warn "[DEBUG] Skipping $module->{distvname}: authorized = '$module->{authorized}' (not truthy)\n" if $verbose;
             next;
         }
 
