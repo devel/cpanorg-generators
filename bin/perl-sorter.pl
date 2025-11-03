@@ -42,6 +42,10 @@ use Getopt::Long;
 use JSON ();
 use LWP::Simple qw(get);
 
+# Command line options
+my $verbose = 0;
+GetOptions('verbose' => \$verbose) or die "Usage: $0 [--verbose]\n";
+
 # Where the CPAN folder is
 my $CPAN = $ENV{CPAN} || 'CPAN';
 
@@ -62,7 +66,15 @@ my $json = JSON->new->pretty(1);
 
 my ( $perl_versions, $perl_testing, $cpan_json, $cache_filename ) = fetch_perl_version_data();
 
+warn "[DEBUG] Fetched " . scalar(@$perl_versions) . " stable versions\n" if $verbose;
+warn "[DEBUG] Fetched " . scalar(@$perl_testing) . " testing versions\n" if $verbose;
+warn "[DEBUG] Cache file: $data_dir/$cache_filename\n" if $verbose;
+warn "[DEBUG] CPAN directory: $CPAN\n" if $verbose;
+warn "[DEBUG] Changing to CPAN directory...\n" if $verbose;
+
 chdir($CPAN);
+
+warn "[DEBUG] Current directory: " . `pwd` if $verbose;
 
 # check disk for files
 foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
@@ -71,7 +83,16 @@ foreach my $perl ( @{$perl_versions}, @{$perl_testing} ) {
     if ( $id =~ /^(.)(.)/ ) {
         my $path     = "authors/id/$1/$1$2/$id";
         my $fileroot = "$path/" . $perl->{distvname};
+
+        warn "[DEBUG] Checking for $perl->{distvname} (cpanid: $id)\n" if $verbose;
+        warn "[DEBUG]   Path: $path\n" if $verbose;
+        warn "[DEBUG]   Fileroot: $fileroot\n" if $verbose;
+        warn "[DEBUG]   Glob pattern: ${fileroot}.*tar.*\n" if $verbose;
+
         my @files    = glob("${fileroot}.*tar.*");
+
+        warn "[DEBUG]   Found files: " . join(', ', @files) . "\n" if $verbose;
+        warn "[DEBUG]   File count: " . scalar(@files) . "\n" if $verbose;
 
         die "Could not find perl ${fileroot}.*" unless scalar(@files) or $fileroot =~ m/RC/;
 
@@ -103,11 +124,14 @@ my $src = "src";
 
 foreach my $perl ( ( @{$perl_versions}, @{$perl_testing} ) ) {
 
+    warn "[DEBUG] Processing symlinks for $perl->{distvname}, files: " . scalar(@{$perl->{files}}) . "\n" if $verbose;
+
     # For a perl e.g. perl-5.12.4-RC1
     # create or symlink:
     foreach my $file ( @{ $perl->{files} } ) {
 
         my $filename = $file->{file};
+        warn "[DEBUG]   Creating symlink for file: $filename\n" if $verbose;
 
         my $out = "${src}/5.0/" . $file->{filename};
 
@@ -289,10 +313,17 @@ sub fetch_perl_version_data {
     # Don't exit early or save yet - only save after successful processing
     my $data = $json->decode($cpan_json);
 
+    warn "[DEBUG] API returned " . scalar(@{$data->{releases}}) . " total releases\n" if $verbose;
+
     my @perls;
     my @testing;
+    my $skipped_unauthorized = 0;
     foreach my $module ( @{ $data->{releases} } ) {
-        next unless $module->{authorized} eq 'true';
+        unless ($module->{authorized} eq 'true') {
+            $skipped_unauthorized++;
+            warn "[DEBUG] Skipping $module->{distvname}: authorized = '$module->{authorized}' (not eq 'true')\n" if $verbose;
+            next;
+        }
 
         my $version = $module->{version};
 
@@ -327,6 +358,10 @@ sub fetch_perl_version_data {
             push @testing, $module;
         }
     }
+
+    warn "[DEBUG] Skipped $skipped_unauthorized releases (unauthorized)\n" if $verbose;
+    warn "[DEBUG] Returning " . scalar(@perls) . " stable + " . scalar(@testing) . " testing = " . (scalar(@perls) + scalar(@testing)) . " total\n" if $verbose;
+
     return ( \@perls, \@testing, $cpan_json, $filename );
 }
 
