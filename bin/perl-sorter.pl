@@ -232,8 +232,10 @@ sub file_meta {
 
     # The CHECKSUM file has already calculated
     # lots of this so use that
+    # Perl 5.26+ removed '.' from @INC, so prepend './' for relative paths
+    my $checksum_path = $checksum =~ m{^/} ? $checksum : "./$checksum";
     my $cksum;
-    unless ( defined( $cksum = do $checksum ) ) {
+    unless ( defined( $cksum = do $checksum_path ) ) {
         die qq[Checksums file "$checksum" not found\n];
     }
 
@@ -329,6 +331,7 @@ sub fetch_perl_version_data {
         my $version = $module->{version};
 
         $version =~ s/-(?:RC|TRIAL)\d+$//;
+        $version =~ s/^v//;  # Strip leading 'v' prefix
         $module->{version_number} = $version;
 
         my ( $major, $minor, $iota ) = split( '[\._]', $version );
